@@ -2,12 +2,14 @@ import streamlit as st
 import sqlite3
 import os
 import shutil
-import requests
 from datetime import datetime
 import fitz  # PyMuPDF สำหรับปั๊ม ตรา Stamp ลงบน PDF
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # -------------------------------------------------------------
-# 1. การตั้งค่าหน้าตา Web App & Custom CSS (โทนสี ม่วง-เทา-ฟ้า)
+# 1. การตั้งค่าหน้าตา Web App & Custom CSS
 # -------------------------------------------------------------
 st.set_page_config(
     page_title="Document Approval System",
@@ -46,43 +48,60 @@ UPLOAD_DIR = "./uploaded_documents"
 DB_FILE = "document_approval.db"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# รายชื่อชนิดเอกสาร
 DOC_TYPES_PORTRAIT = ["OM", "PROCESS FLOW", "MATERIAL SPEC"]
 DOC_TYPES_LANDSCAPE = ["ACC DWG", "MASTER DWG.", "FMEA"]
 ALL_DOC_TYPES = DOC_TYPES_PORTRAIT + DOC_TYPES_LANDSCAPE
 
-# 🌐 ตั้งค่าระบบ LINE Notification & URL แอปพลิเคชัน
-LINE_ACCESS_TOKEN = "RBMqGMQq55Qc+ia3TCT/eZbs6Hp/8eyFSRUCy5URtFhopGRzo83Y2m+7K4JZplUgOZi13r/f9JyHm9bLg4VRfuV84l6/zktHMm2hASsDevA0brJNfeTIqhHci5K3vKgIUJ9xnIM5yJftZPD6vReKegdB04t89/1O/w1cDnyilFU="
-LINE_GROUP_ID = "C1d74e9b109ef2672511754c17702dab8"
+# -------------------------------------------------------------
+# 2. ดึงข้อมูล Configuration และ USERS จาก st.secrets
+# -------------------------------------------------------------
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
 
-# ⚠️ กรุณาเปลี่ยนเป็น URL ของคุณ (เช่น https://your-app.streamlit.app หรือ IP เครื่องในวง LAN)
-APP_URL = "https://statusdocumentpdd-df84ykbbpe9wc8pchnhjpf.streamlit.app/" 
+try:
+    SENDER_EMAIL = st.secrets["email"]["SENDER_EMAIL"]
+    SENDER_PASSWORD = st.secrets["email"]["SENDER_PASSWORD"]
+    USERS = dict(st.secrets["users"])
+except Exception as e:
+    st.error("⚠️ ไม่สามารถโหลดค่าจาก st.secrets ได้ กรุณาตรวจสอบไฟล์ .streamlit/secrets.toml")
+    st.stop()
+
+APP_URL = "https://statusdocumentpdd-df84ykbbpe9wc8pchnhjpf.streamlit.app/"
 
 # -------------------------------------------------------------
-# 2. ฟังก์ชันส่งแจ้งเตือนเข้า LINE Group (เพิ่มลิงก์ + เช็ค Error)
+# 3. ฟังก์ชันส่งแจ้งเตือนทาง Email (รองรับทั้ง Single Email และ List)
 # -------------------------------------------------------------
-def send_line_notify(message):
-    if not LINE_ACCESS_TOKEN or LINE_ACCESS_TOKEN == "YOUR_LINE_ACCESS_TOKEN_HERE":
-        print("⚠️ LINE_ACCESS_TOKEN ไม่ถูกตั้งค่า")
-        return
-    if not LINE_GROUP_ID or LINE_GROUP_ID == "YOUR_LINE_GROUP_ID_HERE":
-        print("⚠️ LINE_GROUP_ID ไม่ถูกตั้งค่า")
+def send_email_notification(receiver_email, subject, body_text):
+    if not SENDER_EMAIL or not SENDER_PASSWORD:
+        st.warning("⚠️ ไม่พบคอนฟิก SENDER_EMAIL หรือ SENDER_PASSWORD ใน secrets")
         return
 
-    url = "https://api.line.me/v2/bot/message/push"
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {LINE_ACCESS_TOKEN}"}
-    payload = {"to": LINE_GROUP_ID, "messages": [{"type": "text", "text": message}]}
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=5)
-        if response.status_code == 200:
-            print("✅ ส่งข้อความแจ้งเตือน LINE สำเร็จ")
+        # ปรับรูปแบบ Email ผู้รับให้รองรับทั้ง String และ List
+        if isinstance(receiver_email, list):
+            recipients = receiver_email
+            to_header = ", ".join(receiver_email)
         else:
-            print(f"❌ ส่ง LINE ไม่สำเร็จ Status Code: {response.status_code}, Response: {response.text}")
+            recipients = [receiver_email]
+            to_header = receiver_email
+
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = to_header
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
+
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        server.sendmail(SENDER_EMAIL, recipients, msg.as_string())
+        server.quit()
+        print(f"✅ ส่งอีเมลแจ้งเตือนไปยัง {to_header} สำเร็จ")
     except Exception as e:
-        print(f"Failed to send LINE message: {e}")
+        print(f"❌ ส่งอีเมลไม่สำเร็จ: {e}")
 
 # -------------------------------------------------------------
-# 3. ฟังก์ชันประทับตรา Stamp ลงบน PDF
+# 4. ฟังก์ชันประทับตรา Stamp ลงบน PDF
 # -------------------------------------------------------------
 def add_approval_stamp(pdf_path, orientation="Portrait"):
     try:
@@ -102,7 +121,6 @@ def add_approval_stamp(pdf_path, orientation="Portrait"):
         stamp_h = 42
         margin = 20
 
-        # คำนวณพิกัดกล่อง Stamp ตาม Rotation ของ PDF
         if rot == 270:
             x0 = margin
             x1 = x0 + stamp_h
@@ -129,21 +147,17 @@ def add_approval_stamp(pdf_path, orientation="Portrait"):
             text_rot = 0
 
         stamp_rect = fitz.Rect(x0, y0, x1, y1)
-
-        # ข้อความที่จะปั๊ม
         current_date = datetime.now().strftime("%Y-%m-%d")
         stamp_text = f"APPROVED\n{current_date}"
 
-        # 1. วาดกรอบสี่เหลี่ยมสีแดง
         page.draw_rect(
             stamp_rect, 
-            color=(0.8, 0, 0),       # เส้นขอบสีแดง
-            fill=(1, 0.9, 0.9),      # พื้นหลังสีชมพูอ่อน
+            color=(0.8, 0, 0),
+            fill=(1, 0.9, 0.9),
             width=2,
             overlay=True
         )
 
-        # 2. ปั๊มข้อความตัวหนังสือ
         page.insert_textbox(
             stamp_rect, 
             stamp_text, 
@@ -155,7 +169,6 @@ def add_approval_stamp(pdf_path, orientation="Portrait"):
             overlay=True
         )
 
-        # บันทึกไฟล์ทับไฟล์เดิม
         temp_path = pdf_path + ".tmp"
         doc.save(temp_path, clean=True, deflate=True)
         doc.close()
@@ -168,7 +181,7 @@ def add_approval_stamp(pdf_path, orientation="Portrait"):
         return False
 
 # -------------------------------------------------------------
-# 4. จัดการฐานข้อมูล SQLite
+# 5. จัดการฐานข้อมูล SQLite
 # -------------------------------------------------------------
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -221,15 +234,8 @@ def init_db():
 init_db()
 
 # -------------------------------------------------------------
-# 5. User Authentication
+# 6. User Authentication & Session State
 # -------------------------------------------------------------
-USERS = {
-    "user_prepare": {"password": "123", "role": "Prepare", "name": "Thanawat C. (ผู้จัดทำ)"},
-    "user_check": {"password": "123", "role": "Check", "name": "Manoch J. (ผู้ตรวจสอบ)"},
-    "user_approve": {"password": "123", "role": "Approve", "name": "Geattisak K. (ผู้อนุมัติ)"},
-    "user_register": {"password": "123", "role": "Register", "name": "Sudarat S. (ขึ้นทะเบียน/สั่งพิมพ์)"}
-}
-
 if "authenticated_user" not in st.session_state:
     st.session_state.authenticated_user = None
 
@@ -273,7 +279,7 @@ def get_documents_by_status(statuses=None):
     return [dict(row) for row in rows]
 
 # -------------------------------------------------------------
-# 6. Main Application
+# 7. Main Application Logic
 # -------------------------------------------------------------
 def main_app():
     user = st.session_state.authenticated_user
@@ -285,14 +291,29 @@ def main_app():
         st.session_state.authenticated_user = None
         st.rerun()
 
+    # Admin Reset System (Safe Delete via SQL)
     if user["role"] == "Register":
         st.sidebar.markdown("---")
         st.sidebar.subheader("⚙️ ระบบผู้ดูแล (Admin Tools)")
         if st.sidebar.button("⚠️ ล้างข้อมูลทั้งหมด (Reset System)"):
-            if os.path.exists(DB_FILE): os.remove(DB_FILE)
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("DROP TABLE IF EXISTS documents")
+            cursor.execute("DROP TABLE IF EXISTS audit_logs")
+            conn.commit()
+            conn.close()
+            
             if os.path.exists(UPLOAD_DIR):
-                shutil.rmtree(UPLOAD_DIR)
-                os.makedirs(UPLOAD_DIR, exist_ok=True)
+                for filename in os.listdir(UPLOAD_DIR):
+                    file_path = os.path.join(UPLOAD_DIR, filename)
+                    try:
+                        if os.path.isfile(file_path) or os.path.islink(file_path):
+                            os.unlink(file_path)
+                        elif os.path.isdir(file_path):
+                            shutil.rmtree(file_path)
+                    except Exception as e:
+                        print(f"Failed to delete {file_path}. Reason: {e}")
+
             init_db()
             st.sidebar.success("ล้างข้อมูลระบบเรียบร้อยแล้ว!")
             st.rerun()
@@ -300,7 +321,9 @@ def main_app():
     st.title("📄 ระบบตรวจสอบ อนุมัติ และขึ้นทะเบียนเอกสาร")
     st.markdown("---")
 
-    # PREPARE
+    # ---------------------------------------------------------
+    # ROLE: PREPARE
+    # ---------------------------------------------------------
     if user["role"] == "Prepare":
         st.subheader("1. จัดทำและส่งเอกสาร (Prepare)")
         tab1, tab2 = st.tabs(["📤 ส่งเอกสารใหม่", "✏️ แก้ไข/ลบเอกสารที่ถูกตีกลับ"])
@@ -341,15 +364,19 @@ def main_app():
 
                     add_log(doc_id, user["name"], f"สร้างเอกสาร ({doc_type} / {orientation_val}) และส่งเข้าสถานะรอตรวจสอบ")
                     
-                    msg = (
-                        f"📢 [แจ้งเตือน: เอกสารใหม่รอการตรวจสอบ]\n"
-                        f"📌 รหัส: {doc_id} | ชนิด: {doc_type} | แนว: {orientation_val}\n📝 เรื่อง: {doc_title}\n"
-                        f"📋 รายละเอียด: {doc_description or '-'}\n👤 ผู้ส่ง: {user['name']}\n"
-                        f"-----------------------------------\n"
-                        f"🔔 ถึงคุณ: [ผู้ตรวจสอบ / Check]\n"
+                    subject = f"[แจ้งเตือน] เอกสารใหม่รอการตรวจสอบ: {doc_id}"
+                    body = (
+                        f"เรียน คุณผู้ตรวจสอบ (Check)\n\n"
+                        f"มีเอกสารใหม่ส่งเข้าระบบรอการตรวจสอบ:\n"
+                        f"📌 รหัสเอกสาร: {doc_id}\n"
+                        f"🏷️ ชนิดเอกสาร: {doc_type}\n"
+                        f"📐 แนววางเอกสาร: {orientation_val}\n"
+                        f"📝 ชื่อเรื่อง: {doc_title}\n"
+                        f"📋 รายละเอียด: {doc_description or '-'}\n"
+                        f"👤 ผู้ส่ง: {user['name']}\n\n"
                         f"🔗 คลิกเพื่อดำเนินการ: {APP_URL}"
                     )
-                    send_line_notify(msg)
+                    send_email_notification(USERS["Manoch"]["email"], subject, body)
                     st.success(f"ส่งเอกสารสำเร็จ! รหัสเอกสาร: {doc_id}")
                     st.rerun()
 
@@ -405,7 +432,9 @@ def main_app():
                             if os.path.exists(doc["file_path"]): os.remove(doc["file_path"])
                             st.rerun()
 
-    # CHECK
+    # ---------------------------------------------------------
+    # ROLE: CHECK
+    # ---------------------------------------------------------
     elif user["role"] == "Check":
         st.subheader("2. ตรวจสอบความถูกต้องเอกสาร (Check)")
         pending_list = get_documents_by_status(["PENDING_CHECK"])
@@ -428,14 +457,17 @@ def main_app():
                         conn.close()
                         add_log(doc['doc_id'], user["name"], "ตรวจสอบผ่าน (Check Pass)", comment)
                         
-                        msg = (
-                            f"✅ [แจ้งเตือน: ผ่านการตรวจสอบแล้ว]\n"
-                            f"📌 รหัส: {doc['doc_id']}\n📝 เรื่อง: {doc['title']}\n🔍 ผู้ตรวจสอบ: {user['name']}\n"
-                            f"-----------------------------------\n"
-                            f"🔔 ถึงคุณ: [ผู้อนุมัติ / Approve]\n"
+                        subject = f"[แจ้งเตือน] เอกสารผ่านการตรวจสอบแล้ว: {doc['doc_id']}"
+                        body = (
+                            f"เรียน คุณผู้อนุมัติ (Approve)\n\n"
+                            f"เอกสารได้รับการตรวจสอบเรียบร้อยแล้ว และรอการอนุมัติ:\n"
+                            f"📌 รหัสเอกสาร: {doc['doc_id']}\n"
+                            f"📝 เรื่อง: {doc['title']}\n"
+                            f"🔍 ผู้ตรวจสอบ: {user['name']}\n"
+                            f"💬 หมายเหตุ: {comment or '-'}\n\n"
                             f"🔗 คลิกเพื่ออนุมัติเอกสาร: {APP_URL}"
                         )
-                        send_line_notify(msg)
+                        send_email_notification(USERS["Geattisak"]["email"], subject, body)
                         st.rerun()
                         
                     if col2.button("❌ ตีกลับแก้ไข", key=f"c_rej_{doc['doc_id']}"):
@@ -445,11 +477,25 @@ def main_app():
                         conn.commit()
                         conn.close()
                         add_log(doc['doc_id'], user["name"], "ตีกลับแก้ไข (Rejected)", comment)
+                        
+                        subject = f"[แจ้งเตือน] เอกสารของคุณถูกตีกลับให้แก้ไข: {doc['doc_id']}"
+                        body = (
+                            f"เรียน คุณผู้จัดทำ (Prepare)\n\n"
+                            f"เอกสารของคุณไม่ผ่านการตรวจสอบ และถูกตีกลับเพื่อแก้ไข:\n"
+                            f"📌 รหัสเอกสาร: {doc['doc_id']}\n"
+                            f"📝 เรื่อง: {doc['title']}\n"
+                            f"❌ ผู้ตรวจสอบ: {user['name']}\n"
+                            f"💬 สาเหตุ/ข้อเสนอแนะ: {comment or '-'}\n\n"
+                            f"🔗 คลิกเพื่อแก้ไขเอกสาร: {APP_URL}"
+                        )
+                        send_email_notification(USERS["Thanawat"]["email"], subject, body)
                         st.rerun()
         else:
             st.info("ไม่มีรายการเอกสารที่รอการตรวจสอบ")
 
-    # APPROVE
+    # ---------------------------------------------------------
+    # ROLE: APPROVE
+    # ---------------------------------------------------------
     elif user["role"] == "Approve":
         st.subheader("3. อนุมัติเอกสาร (Approve)")
         pending_list = get_documents_by_status(["PENDING_APPROVE"])
@@ -480,15 +526,18 @@ def main_app():
                             
                             add_log(doc['doc_id'], user["name"], "อนุมัติเอกสาร และประทับตรา Stamp เรียบร้อยแล้ว", comment)
                             
-                            msg = (
-                                f"🎉 [แจ้งเตือน: เอกสารได้รับการอนุมัติแล้ว (ประทับตรา Stamp แล้ว)]\n"
-                                f"📌 รหัส: {doc['doc_id']} | ชนิด: {doc_type}\n📝 เรื่อง: {doc['title']}\n"
-                                f"✍️ ผู้อนุมัติ: {user['name']}\n💬 ความเห็น: {comment or '-'}\n"
-                                f"-----------------------------------\n"
-                                f"🔔 ถึงคุณ: [เจ้าหน้าที่ขึ้นทะเบียน / Register & Print]\n"
-                                f"🔗 คลิกเพื่อขึ้นทะเบียนและดาวน์โหลด: {APP_URL}"
+                            subject = f"[แจ้งเตือน] เอกสารได้รับการอนุมัติเรียบร้อยแล้ว: {doc['doc_id']}"
+                            body = (
+                                f"เรียน คุณเจ้าหน้าที่ขึ้นทะเบียน (Register & Print)\n\n"
+                                f"เอกสารได้รับการอนุมัติและประทับตรา Stamp เรียบร้อยแล้ว พร้อมขึ้นทะเบียน:\n"
+                                f"📌 รหัสเอกสาร: {doc['doc_id']}\n"
+                                f"🏷️ ชนิดเอกสาร: {doc_type}\n"
+                                f"📝 เรื่อง: {doc['title']}\n"
+                                f"✍️ ผู้อนุมัติ: {user['name']}\n"
+                                f"💬 ความเห็น: {comment or '-'}\n\n"
+                                f"🔗 คลิกเพื่อดำเนินการขึ้นทะเบียน: {APP_URL}"
                             )
-                            send_line_notify(msg)
+                            send_email_notification(USERS["Sudarat"]["email"], subject, body)
                             st.success("อนุมัติเอกสารและประทับตรา Stamp เรียบร้อยแล้ว!")
                             st.rerun()
                         
@@ -499,11 +548,25 @@ def main_app():
                         conn.commit()
                         conn.close()
                         add_log(doc['doc_id'], user["name"], "ไม่อนุมัติ (Approved Reject)", comment)
+                        
+                        subject = f"[แจ้งเตือน] เอกสารไม่ได้รับการอนุมัติ: {doc['doc_id']}"
+                        body = (
+                            f"เรียน คุณผู้จัดทำ (Prepare)\n\n"
+                            f"เอกสารของคุณไม่ได้รับการอนุมัติ:\n"
+                            f"📌 รหัสเอกสาร: {doc['doc_id']}\n"
+                            f"📝 เรื่อง: {doc['title']}\n"
+                            f"❌ ผู้อนุมัติ: {user['name']}\n"
+                            f"💬 เหตุผล: {comment or '-'}\n\n"
+                            f"🔗 คลิกเพื่อเข้าระบบ: {APP_URL}"
+                        )
+                        send_email_notification(USERS["Thanawat"]["email"], subject, body)
                         st.rerun()
         else:
             st.info("ไม่มีรายการเอกสารที่รอการอนุมัติ")
 
-    # REGISTER & PRINT
+    # ---------------------------------------------------------
+    # ROLE: REGISTER
+    # ---------------------------------------------------------
     elif user["role"] == "Register":
         st.subheader("4. ขึ้นทะเบียนและสั่งพิมพ์เอกสาร (Register & Print)")
         pending_list = get_documents_by_status(["PENDING_REGISTER"])
@@ -535,13 +598,17 @@ def main_app():
                             
                             add_log(doc['doc_id'], user["name"], f"ขึ้นทะเบียนเลข {reg_no} และสั่งพิมพ์เรียบร้อยแล้ว")
                             
-                            msg = (
-                                f"🖨️ [แจ้งเตือน: ขึ้นทะเบียนสำเร็จ]\n"
-                                f"🏷️ เลขทะเบียน: {reg_no}\n📝 เรื่อง: {doc['title']}\n"
-                                f"-----------------------------------\n"
-                                f"🔗 ดูตารางติดตามสถานะ: {APP_URL}"
+                            subject = f"[แจ้งเตือน] ขึ้นทะเบียนเอกสารสำเร็จ: {reg_no}"
+                            body = (
+                                f"เรียน คุณผู้จัดทำ (Prepare)\n\n"
+                                f"เอกสารของคุณได้รับการขึ้นทะเบียนและสั่งพิมพ์เรียบร้อยแล้ว:\n"
+                                f"🏷️ เลขทะเบียนเอกสาร: {reg_no}\n"
+                                f"📌 รหัสอ้างอิง: {doc['doc_id']}\n"
+                                f"📝 เรื่อง: {doc['title']}\n"
+                                f"👤 ผู้ขึ้นทะเบียน: {user['name']}\n\n"
+                                f"🔗 ตรวจสอบสถานะในระบบ: {APP_URL}"
                             )
-                            send_line_notify(msg)
+                            send_email_notification(USERS["Thanawat"]["email"], subject, body)
                             st.success("ขึ้นทะเบียนและบันทึกเรียบร้อยแล้ว")
                             st.rerun()
                         else:
@@ -549,7 +616,9 @@ def main_app():
         else:
             st.info("ไม่มีรายการเอกสารรอการขึ้นทะเบียน")
 
-    # Dashboard Table
+    # ---------------------------------------------------------
+    # Dashboard & Audit Logs Viewer
+    # ---------------------------------------------------------
     st.markdown("---")
     st.subheader("📊 ตารางติดตามสถานะเอกสารทั้งหมด (DB View)")
     all_docs = get_documents_by_status()
@@ -569,6 +638,9 @@ def main_app():
     else:
         st.caption("ยังไม่มีข้อมูลเอกสารในระบบ")
 
+# -------------------------------------------------------------
+# 8. Entry Point
+# -------------------------------------------------------------
 if st.session_state.authenticated_user is None:
     login_screen()
 else:
