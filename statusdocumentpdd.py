@@ -56,7 +56,7 @@ LINE_ACCESS_TOKEN = "RBMqGMQq55Qc+ia3TCT/eZbs6Hp/8eyFSRUCy5URtFhopGRzo83Y2m+7K4J
 LINE_GROUP_ID = "C1d74e9b109ef2672511754c17702dab8"
 
 # ⚠️ กรุณาเปลี่ยนเป็น URL ของคุณ (เช่น https://your-app.streamlit.app หรือ IP เครื่องในวง LAN)
-APP_URL = "http://localhost:8501" 
+APP_URL = "https://statusdocumentpdd-df84ykbbpe9wc8pchnhjpf.streamlit.app/" 
 
 # -------------------------------------------------------------
 # 2. ฟังก์ชันส่งแจ้งเตือนเข้า LINE Group (เพิ่มลิงก์ + เช็ค Error)
