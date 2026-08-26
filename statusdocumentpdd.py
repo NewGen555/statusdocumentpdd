@@ -14,7 +14,7 @@ st.set_page_config(
     page_title="Document Approval System", page_icon="📄", layout="wide"
 )
 
-APP_URL = "http://localhost:8501"
+APP_URL = "https://statusdocumentpdd-df84ykbbpe9wc8pchnhjpf.streamlit.app/"
 UPLOAD_DIR = "./uploaded_documents"
 DB_FILE = "document_approval.db"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -325,11 +325,24 @@ def init_db():
         )
     """)
 
-  for col in ["chk1_name", "chk2_name", "chk3_name", "chk4_name", "chk5_name"]:
+  # เติมคอลัมน์อัตโนมัติกรณีฐานข้อมูลเก่าไม่มี
+  cols_to_check = [
+      "chk1_name",
+      "chk2_name",
+      "chk3_name",
+      "chk4_name",
+      "chk5_name",
+      "checker1_email",
+      "checker2_email",
+      "checker3_email",
+      "checker4_email",
+      "checker5_email",
+  ]
+  for col in cols_to_check:
     try:
       cursor.execute(f"ALTER TABLE documents ADD COLUMN {col} TEXT DEFAULT '-'")
     except sqlite3.OperationalError:
-      pass
+      pass  # ถ้ามีคอลัมน์อยู่แล้ว ข้ามไปไม่ให้เกิด error
 
   conn.commit()
   conn.close()
