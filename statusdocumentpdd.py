@@ -1,49 +1,20 @@
-import streamlit as st
-import sqlite3
-import os
-import shutil
 from datetime import datetime
-import fitz  # PyMuPDF สำหรับปั๊ม ตรา Stamp ลงบน PDF
+import os
 import smtplib
-from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import fitz  # PyMuPDF
+import sqlite3
+import streamlit as st
 
 # -------------------------------------------------------------
-# 1. การตั้งค่าหน้าตา Web App & Custom CSS
+# 1. การตั้งค่า Web App และ URL ระบบ
 # -------------------------------------------------------------
 st.set_page_config(
-    page_title="Document Approval System",
-    page_icon="📄",
-    layout="wide"
+    page_title="Document Approval System", page_icon="📄", layout="wide"
 )
 
-st.markdown("""
-    <style>
-    .main { background-color: #f8fafc; }
-    h1, h2, h3 { color: #3b0764 !important; font-family: 'Sarabun', 'Inter', sans-serif; }
-    [data-testid="stSidebar"] { background-color: #1e1b4b; color: #f1f5f9; }
-    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] span { color: #f1f5f9 !important; }
-    div.stButton > button[kind="primary"] {
-        background-color: #6366f1 !important; color: #ffffff !important;
-        border-radius: 8px !important; border: none !important;
-        font-weight: 600 !important; box-shadow: 0 4px 6px -1px rgba(99, 102, 241, 0.3);
-    }
-    div.stButton > button[kind="primary"]:hover { background-color: #4f46e5 !important; }
-    div.stButton > button[kind="secondary"] {
-        background-color: #0284c7 !important; color: #ffffff !important;
-        border-radius: 8px !important; border: none !important; font-weight: 500 !important;
-    }
-    div.stButton > button[kind="secondary"]:hover { background-color: #0369a1 !important; }
-    .streamlit-expanderHeader {
-        background-color: #ffffff !important; border-radius: 8px !important;
-        border-left: 4px solid #8b5cf6 !important; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
-    }
-    button[data-baseweb="tab"] { color: #475569 !important; font-weight: 600 !important; }
-    button[aria-selected="true"] { color: #7c3aed !important; border-bottom-color: #7c3aed !important; }
-    .stTextInput>div>div>input, .stTextArea>div>div>textarea { border-radius: 6px !important; border: 1px solid #cbd5e1 !important; }
-    </style>
-""", unsafe_allow_html=True)
-
+APP_URL = "http://localhost:8501"
 UPLOAD_DIR = "./uploaded_documents"
 DB_FILE = "document_approval.db"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -53,144 +24,275 @@ DOC_TYPES_LANDSCAPE = ["ACC DWG", "MASTER DWG.", "FMEA"]
 ALL_DOC_TYPES = DOC_TYPES_PORTRAIT + DOC_TYPES_LANDSCAPE
 
 # -------------------------------------------------------------
-# 2. ดึงข้อมูล Configuration และ USERS จาก st.secrets
+# 2. โหลด Secrets และระบบส่งอีเมล HTML
 # -------------------------------------------------------------
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
 try:
-    SENDER_EMAIL = st.secrets["email"]["SENDER_EMAIL"]
-    SENDER_PASSWORD = st.secrets["email"]["SENDER_PASSWORD"]
-    USERS = dict(st.secrets["users"])
+  SENDER_EMAIL = st.secrets["email"]["SENDER_EMAIL"]
+  SENDER_PASSWORD = st.secrets["email"]["SENDER_PASSWORD"]
+  USERS = dict(st.secrets["users"])
 except Exception as e:
-    st.error("⚠️ ไม่สามารถโหลดค่าจาก st.secrets ได้ กรุณาตรวจสอบไฟล์ .streamlit/secrets.toml")
-    st.stop()
+  st.error(
+      f"⚠️ ไม่สามารถโหลดค่าจาก st.secrets ได้: {e}\nกรุณาตรวจสอบไฟล์"
+      " .streamlit/secrets.toml"
+  )
+  st.stop()
 
-APP_URL = "https://statusdocumentpdd-df84ykbbpe9wc8pchnhjpf.streamlit.app/"
+
+def format_email_str(email_data):
+  if isinstance(email_data, list):
+    return ", ".join(email_data)
+  return str(email_data) if email_data else ""
+
+
+def send_email_notification(receiver_email, subject, body_html):
+  if not SENDER_EMAIL or not SENDER_PASSWORD or not receiver_email:
+    return
+
+  try:
+    if isinstance(receiver_email, str):
+      recipients = [
+          e.strip() for e in receiver_email.split(",") if e.strip()
+      ]
+    else:
+      recipients = receiver_email
+
+    msg = MIMEMultipart("alternative")
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = ", ".join(recipients)
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body_html, "html", "utf-8"))
+
+    server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+    server.starttls()
+    server.login(SENDER_EMAIL, SENDER_PASSWORD)
+    server.sendmail(SENDER_EMAIL, recipients, msg.as_string())
+    server.quit()
+  except Exception as e:
+    print(f"❌ ส่งอีเมลไม่สำเร็จ: {e}")
+
+
+def send_next_step_email(
+    target_email, doc_id, doc_title, role_name, action_hint="ตรวจสอบ/อนุมัติ"
+):
+  if not target_email:
+    return
+  email_body = f"""
+    <html>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <h3 style="color: #004085;">เรียน ท่านผู้มีสิทธิ์อนุมัติ ({role_name})</h3>
+        <p>มีเอกสารรอการ{action_hint}ในลำดับของท่าน รายละเอียดดังนี้:</p>
+        <ul>
+          <li><b>รหัสเอกสาร:</b> {doc_id}</li>
+          <li><b>ชื่อเรื่อง:</b> {doc_title}</li>
+          <li><b>สถานะปัจจุบัน:</b> รอการ{action_hint} ({role_name})</li>
+        </ul>
+        <p>กรุณาคลิกที่ปุ่มด้านล่างเพื่อเข้าสู่ระบบเพื่อดำเนินการ:</p>
+        <p style="margin-top: 20px;">
+          <a href="{APP_URL}" 
+             style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+             👉 คลิกที่นี่เพื่อเข้าสู่ระบบ PDD System
+          </a>
+        </p>
+      </body>
+    </html>
+    """
+  send_email_notification(
+      target_email,
+      f"[PDD System] เอกสารขอรับการ{action_hint} ({role_name}):"
+      f" {doc_title}",
+      email_body,
+  )
+
+
+def display_pdf_download_link(file_path, filename, key=None):
+  if os.path.exists(file_path):
+    with open(file_path, "rb") as f:
+      pdf_bytes = f.read()
+
+    st.download_button(
+        label=f"📥 ดาวน์โหลด / เปิดดูไฟล์ PDF ({filename})",
+        data=pdf_bytes,
+        file_name=filename,
+        mime="application/pdf",
+        type="primary",
+        key=key,
+    )
+  else:
+    st.warning("⚠️ ไม่พบไฟล์ PDF ในระบบ")
+
 
 # -------------------------------------------------------------
-# 3. ฟังก์ชันส่งแจ้งเตือนทาง Email
+# 3. Dynamic Stamp (ตารางลงนาม + ตราประทับ APPROVED สีแดง)
 # -------------------------------------------------------------
-def send_email_notification(receiver_email, subject, body_text):
-    if not SENDER_EMAIL or not SENDER_PASSWORD:
-        st.warning("⚠️ ไม่พบคอนฟิก SENDER_EMAIL หรือ SENDER_PASSWORD ใน secrets")
-        return
+def add_approval_stamp_dynamic(pdf_path, doc_info):
+  try:
+    if not os.path.exists(pdf_path):
+      return False
 
-    try:
-        if isinstance(receiver_email, list):
-            recipients = receiver_email
-            to_header = ", ".join(receiver_email)
-        else:
-            recipients = [receiver_email]
-            to_header = receiver_email
+    doc = fitz.open(pdf_path)
+    page = doc[0]
+    rect = page.rect
+    page_w, page_h = rect.width, rect.height
 
-        msg = MIMEMultipart()
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = to_header
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
+    if doc_info["doc_type"] == "FMEA":
+      signatures = [
+          ("PREPARED", doc_info.get("prepared_by", "-")),
+          ("PDD", doc_info.get("chk1_name", "-")),
+          ("PCS", doc_info.get("chk2_name", "-")),
+          ("QCD", doc_info.get("chk3_name", "-")),
+          ("PRD", doc_info.get("chk4_name", "-")),
+          ("PCD", doc_info.get("chk5_name", "-")),
+      ]
+    else:
+      signatures = [
+          ("PREPARED", doc_info.get("prepared_by", "-")),
+          ("CHECKED", doc_info.get("checked_by", "-")),
+          ("APPROVED", doc_info.get("approved_by", "-")),
+      ]
 
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        server.sendmail(SENDER_EMAIL, recipients, msg.as_string())
-        server.quit()
-        print(f"✅ ส่งอีเมลแจ้งเตือนไปยัง {to_header} สำเร็จ")
-    except Exception as e:
-        print(f"❌ ส่งอีเมลไม่สำเร็จ: {e}")
+    num_cols = len(signatures)
+    col_w = 55 if num_cols == 6 else 75
+    box_h = 42
+    total_w = col_w * num_cols
 
-# -------------------------------------------------------------
-# 4. ฟังก์ชันประทับตรา Stamp ลงบน PDF
-# -------------------------------------------------------------
-def add_approval_stamp(pdf_path, orientation="Portrait"):
-    try:
-        if not os.path.exists(pdf_path):
-            st.error(f"ไม่พบไฟล์ PDF ในระบบ: {pdf_path}")
-            return False
+    margin_right = 15
+    margin_top = 15
+    x0 = page_w - total_w - margin_right
+    y0 = margin_top
 
-        doc = fitz.open(pdf_path)
-        page = doc[0]
-        
-        rect = page.rect
-        page_w = rect.width
-        page_h = rect.height
-        rot = page.rotation
+    current_date = datetime.now().strftime("%Y-%m-%d")
 
-        stamp_w = 140
-        stamp_h = 42
-        margin = 20
+    for idx, (role_title, name) in enumerate(signatures):
+      col_x0 = x0 + (idx * col_w)
+      col_x1 = col_x0 + col_w
 
-        if rot == 270:
-            x0 = margin
-            x1 = x0 + stamp_h
-            y0 = margin
-            y1 = y0 + stamp_w
-            text_rot = 270
-        elif rot == 90:
-            x1 = page_w - margin
-            x0 = x1 - stamp_h
-            y1 = page_h - margin
-            y0 = y1 - stamp_w
-            text_rot = 90
-        elif rot == 180:
-            x0 = margin
-            x1 = x0 + stamp_w
-            y1 = page_h - margin
-            y0 = y1 - stamp_h
-            text_rot = 180
-        else:
-            x1 = page_w - margin
-            x0 = x1 - stamp_w
-            y0 = margin
-            y1 = y0 + stamp_h
-            text_rot = 0
+      r_header = fitz.Rect(col_x0, y0, col_x1, y0 + 12)
+      page.draw_rect(
+          r_header, color=(0.1, 0.1, 0.5), fill=(0.9, 0.95, 1.0), width=0.6
+      )
+      page.insert_textbox(
+          r_header,
+          role_title,
+          fontsize=5.5,
+          fontname="Helvetica",
+          color=(0.1, 0.1, 0.5),
+          align=fitz.TEXT_ALIGN_CENTER,
+      )
 
-        stamp_rect = fitz.Rect(x0, y0, x1, y1)
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        stamp_text = f"APPROVED\n{current_date}"
+      r_body = fitz.Rect(col_x0, y0 + 12, col_x1, y0 + 30)
+      page.draw_rect(
+          r_body, color=(0.1, 0.1, 0.5), fill=(1, 1, 1), width=0.6
+      )
 
-        page.draw_rect(
-            stamp_rect, 
-            color=(0.8, 0, 0),
-            fill=(1, 0.9, 0.9),
-            width=2,
-            overlay=True
+      display_status = f"SIGNED\n{name}" if name != "-" else "-"
+      text_color = (0, 0.4, 0) if name != "-" else (0.5, 0.5, 0.5)
+
+      page.insert_textbox(
+          r_body,
+          display_status,
+          fontsize=5.5,
+          fontname="Helvetica",
+          color=text_color,
+          align=fitz.TEXT_ALIGN_CENTER,
+      )
+
+      r_footer = fitz.Rect(col_x0, y0 + 30, col_x1, y0 + box_h)
+      page.draw_rect(
+          r_footer,
+          color=(0.1, 0.1, 0.5),
+          fill=(0.95, 0.95, 0.95),
+          width=0.6,
+      )
+      page.insert_textbox(
+          r_footer,
+          current_date if name != "-" else "-",
+          fontsize=5,
+          fontname="Helvetica",
+          color=(0.3, 0.3, 0.3),
+          align=fitz.TEXT_ALIGN_CENTER,
+      )
+
+    is_fully_approved = (
+        doc_info["doc_type"] == "FMEA"
+        and all(
+            doc_info.get(f"chk{i}_name", "-") != "-" for i in range(1, 6)
         )
+    ) or (
+        doc_info["doc_type"] != "FMEA"
+        and doc_info.get("approved_by", "-") != "-"
+    )
 
-        page.insert_textbox(
-            stamp_rect, 
-            stamp_text, 
-            fontsize=11, 
-            fontname="helv", 
-            color=(0.8, 0, 0), 
-            align=fitz.TEXT_ALIGN_CENTER,
-            rotate=text_rot,
-            overlay=True
-        )
+    if is_fully_approved:
+      stamp_w, stamp_h = 130, 45
+      stamp_x0 = page_w - stamp_w - 20
+      stamp_y0 = y0 + box_h + 15
+      stamp_rect = fitz.Rect(
+          stamp_x0, stamp_y0, stamp_x0 + stamp_w, stamp_y0 + stamp_h
+      )
 
-        temp_path = pdf_path + ".tmp"
-        doc.save(temp_path, clean=True, deflate=True)
-        doc.close()
+      red_color = (0.85, 0.1, 0.1)
 
-        os.replace(temp_path, pdf_path)
-        return True
+      page.draw_rect(stamp_rect, color=red_color, width=2.5)
+      inner_rect = fitz.Rect(
+          stamp_x0 + 3,
+          stamp_y0 + 3,
+          stamp_x0 + stamp_w - 3,
+          stamp_y0 + stamp_h - 3,
+      )
+      page.draw_rect(inner_rect, color=red_color, width=1.0)
 
-    except Exception as e:
-        st.error(f"เกิดข้อผิดพลาดในการปั๊มตรา Stamp: {e}")
-        return False
+      # ขยายความสูงและปรับฟอนต์คำว่า APPROVED ให้แสดงผลสมบูรณ์
+      text_rect = fitz.Rect(
+          stamp_x0, stamp_y0 + 4, stamp_x0 + stamp_w, stamp_y0 + 30
+      )
+      page.insert_textbox(
+          text_rect,
+          "APPROVED",
+          fontsize=13,
+          fontname="Helvetica-Bold",
+          color=red_color,
+          align=fitz.TEXT_ALIGN_CENTER,
+      )
+
+      date_rect = fitz.Rect(
+          stamp_x0, stamp_y0 + 30, stamp_x0 + stamp_w, stamp_y0 + 42
+      )
+      page.insert_textbox(
+          date_rect,
+          f"DATE: {current_date}",
+          fontsize=7,
+          fontname="Helvetica-Bold",
+          color=red_color,
+          align=fitz.TEXT_ALIGN_CENTER,
+      )
+
+    temp_path = pdf_path + ".tmp"
+    doc.save(temp_path, clean=True, deflate=True)
+    doc.close()
+
+    os.replace(temp_path, pdf_path)
+    return True
+  except Exception as e:
+    st.error(f"เกิดข้อผิดพลาดในการสร้าง Stamp: {e}")
+    return False
+
 
 # -------------------------------------------------------------
-# 5. จัดการฐานข้อมูล SQLite
+# 4. Database Initialization
 # -------------------------------------------------------------
 def get_db_connection():
-    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
+  conn = sqlite3.connect(DB_FILE, check_same_thread=False)
+  conn.row_factory = sqlite3.Row
+  return conn
+
 
 def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
+  conn = get_db_connection()
+  cursor = conn.cursor()
+  cursor.execute("""
         CREATE TABLE IF NOT EXISTS documents (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             doc_id TEXT UNIQUE,
@@ -205,514 +307,566 @@ def init_db():
             checked_by TEXT DEFAULT '-',
             approved_by TEXT DEFAULT '-',
             registered_by TEXT DEFAULT '-',
+            chk1_name TEXT DEFAULT '-',
+            chk2_name TEXT DEFAULT '-',
+            chk3_name TEXT DEFAULT '-',
+            chk4_name TEXT DEFAULT '-',
+            chk5_name TEXT DEFAULT '-',
+            checker_email TEXT DEFAULT '',
+            checker1_email TEXT DEFAULT '',
+            checker2_email TEXT DEFAULT '',
+            checker3_email TEXT DEFAULT '',
+            checker4_email TEXT DEFAULT '',
+            checker5_email TEXT DEFAULT '',
+            approver_email TEXT DEFAULT '',
+            register_email TEXT DEFAULT '',
             status TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
-    ''')
-    
-    cursor.execute("PRAGMA table_info(documents)")
-    columns = [col[1] for col in cursor.fetchall()]
-    if "doc_type" not in columns:
-        cursor.execute("ALTER TABLE documents ADD COLUMN doc_type TEXT DEFAULT 'OM'")
-    if "orientation" not in columns:
-        cursor.execute("ALTER TABLE documents ADD COLUMN orientation TEXT DEFAULT 'Portrait'")
-        
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS audit_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            doc_id TEXT NOT NULL,
-            action_by TEXT NOT NULL,
-            action TEXT NOT NULL,
-            comment TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    """)
+
+  for col in ["chk1_name", "chk2_name", "chk3_name", "chk4_name", "chk5_name"]:
+    try:
+      cursor.execute(f"ALTER TABLE documents ADD COLUMN {col} TEXT DEFAULT '-'")
+    except sqlite3.OperationalError:
+      pass
+
+  conn.commit()
+  conn.close()
+
 
 init_db()
 
 # -------------------------------------------------------------
-# 6. User Authentication & Session State
+# 5. Session State & Login Screen
 # -------------------------------------------------------------
 if "authenticated_user" not in st.session_state:
-    st.session_state.authenticated_user = None
+  st.session_state.authenticated_user = None
+
 
 def login_screen():
-    st.markdown("<h2 style='text-align: center; color: #4c1d95;'>🔐 เข้าสู่ระบบ อนุมัติและขึ้นทะเบียนเอกสาร</h2>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("Log In", use_container_width=True, type="primary")
-            if submit:
-                if username in USERS and USERS[username]["password"] == password:
-                    st.session_state.authenticated_user = {
-                        "username": username,
-                        "role": USERS[username]["role"],
-                        "name": USERS[username]["name"]
-                    }
-                    st.success(f"ยินดีต้อนรับ {USERS[username]['name']}")
-                    st.rerun()
-                else:
-                    st.error("Username หรือ Password ไม่ถูกต้อง")
+  st.markdown(
+      "<h2 style='text-align: center;'>🔐 เข้าสู่ระบบ อนุมัติเอกสาร PDD</h2>",
+      unsafe_allow_html=True,
+  )
+  col1, col2, col3 = st.columns([1, 2, 1])
+  with col2:
+    with st.form("login_form"):
+      username = st.text_input("Username")
+      password = st.text_input("Password", type="password")
+      submit = st.form_submit_button(
+          "Log In", use_container_width=True, type="primary"
+      )
+      if submit:
+        if (
+            username in USERS
+            and str(USERS[username]["password"]) == str(password)
+        ):
+          st.session_state.authenticated_user = {
+              "username": username,
+              "role": USERS[username]["role"],
+              "name": USERS[username]["name"],
+              "email": USERS[username].get("email", ""),
+          }
+          st.rerun()
+        else:
+          st.error("Username หรือ Password ไม่ถูกต้อง")
 
-def add_log(doc_id, action_by, action, comment=""):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO audit_logs (doc_id, action_by, action, comment) VALUES (?, ?, ?, ?)", (doc_id, action_by, action, comment))
-    conn.commit()
-    conn.close()
 
-def get_documents_by_status(statuses=None, prepared_by=None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    query = "SELECT * FROM documents"
-    params = []
-    conditions = []
+def get_documents_by_status(statuses=None):
+  conn = get_db_connection()
+  cursor = conn.cursor()
+  query = "SELECT * FROM documents"
+  params = []
+  if statuses:
+    placeholders = ", ".join(["?"] * len(statuses))
+    query += f" WHERE status IN ({placeholders})"
+    params.extend(statuses)
+  query += " ORDER BY id DESC"
+  cursor.execute(query, params)
+  rows = cursor.fetchall()
+  conn.close()
+  return [dict(row) for row in rows]
 
-    if statuses:
-        placeholders = ', '.join(['?'] * len(statuses))
-        conditions.append(f"status IN ({placeholders})")
-        params.extend(statuses)
-
-    if prepared_by:
-        conditions.append("prepared_by = ?")
-        params.append(prepared_by)
-
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
-
-    query += " ORDER BY id DESC"
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
 
 # -------------------------------------------------------------
-# 7. Main Application Logic
+# 6. Main App Process
 # -------------------------------------------------------------
 def main_app():
-    user = st.session_state.authenticated_user
-    st.sidebar.title("👤 ผู้ใช้งานปัจจุบัน")
-    st.sidebar.write(f"**ชื่อ:** {user['name']}")
-    st.sidebar.write(f"**สิทธิ์ (Role):** `{user['role']}`")
-    
-    if st.sidebar.button("🚪 Logout", type="primary"):
-        st.session_state.authenticated_user = None
+  user = st.session_state.authenticated_user
+  st.sidebar.title("👤 ผู้ใช้งานปัจจุบัน")
+  st.sidebar.write(f"**ชื่อ:** {user['name']}")
+  st.sidebar.write(f"**ตำแหน่ง:** `{user['role']}`")
+
+  if st.sidebar.button("🚪 Logout", type="primary"):
+    st.session_state.authenticated_user = None
+    st.rerun()
+
+  st.title("📄 ระบบตรวจสอบ อนุมัติ และขึ้นทะเบียนเอกสาร PDD")
+  st.markdown("---")
+
+  # ---------------------------------------------------------
+  # PREPARE ROLE
+  # ---------------------------------------------------------
+  if user["role"] == "Prepare":
+    st.subheader("1. จัดทำและส่งเอกสาร (Prepare)")
+    doc_type = st.selectbox("ชนิดเอกสาร (Document Type)", ALL_DOC_TYPES)
+    orientation_val = (
+        "Landscape" if doc_type in DOC_TYPES_LANDSCAPE else "Portrait"
+    )
+
+    with st.form("upload_form", clear_on_submit=True):
+      doc_title = st.text_input("ชื่อเรื่อง/ชื่อเอกสาร")
+      doc_description = st.text_area("รายละเอียดการจัดทำ/แก้ไข")
+      uploaded_file = st.file_uploader("อัปโหลดไฟล์ PDF", type=["pdf"])
+
+      st.markdown("---")
+      if doc_type == "FMEA":
+        st.markdown(
+            "##### 📧 กำหนดอีเมลทีมผู้ตรวจสอบ FMEA (ลำดับการส่ง: PDD ➡️ PCS ➡️ QCD"
+            " ➡️ PRD ➡️ PCD)"
+        )
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+          c1 = st.text_input(
+              "PDD (Manoch)",
+              value=format_email_str(
+                  USERS.get("Manoch", {}).get("email", "")
+              ),
+          )
+        with col2:
+          c2 = st.text_input(
+              "PCS (Geattisak)",
+              value=format_email_str(
+                  USERS.get("Geattisak_Check", {}).get("email", "")
+              ),
+          )
+        with col3:
+          c3 = st.text_input(
+              "QCD (Maitree)",
+              value=format_email_str(
+                  USERS.get("Maitree", {}).get("email", "")
+              ),
+          )
+        with col4:
+          c4 = st.text_input(
+              "PRD (Suriya)",
+              value=format_email_str(
+                  USERS.get("Suriya", {}).get("email", "")
+              ),
+          )
+        with col5:
+          c5 = st.text_input(
+              "PCD (Umaporn)",
+              value=format_email_str(
+                  USERS.get("Umaporn", {}).get("email", "")
+              ),
+          )
+
+        reg_email = st.text_input(
+            "Register Email",
+            value=format_email_str(USERS.get("Sudarat", {}).get("email", "")),
+        )
+      else:
+        st.markdown(
+            "##### 📧 กำหนดอีเมลผู้รับผิดชอบ (ลำดับการส่ง: Checker ➡️ Approver ➡️"
+            " Register)"
+        )
+        col_c, col_a, col_r = st.columns(3)
+        with col_c:
+          chk_email = st.text_input(
+              "Checker Email",
+              value=format_email_str(
+                  USERS.get("Manoch", {}).get("email", "")
+              ),
+          )
+        with col_a:
+          app_email = st.text_input(
+              "Approver Email",
+              value=format_email_str(
+                  USERS.get("Geattisak", {}).get("email", "")
+              ),
+          )
+        with col_r:
+          reg_email = st.text_input(
+              "Register Email",
+              value=format_email_str(
+                  USERS.get("Sudarat", {}).get("email", "")
+              ),
+          )
+
+      submit = st.form_submit_button("ส่งเอกสารเข้าระบบ", type="primary")
+
+      if submit and doc_title and uploaded_file:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM documents")
+        count = cursor.fetchone()[0]
+        doc_id = f"TMP-{count + 1:04d}"
+        file_path = os.path.join(UPLOAD_DIR, f"{doc_id}_{uploaded_file.name}")
+
+        with open(file_path, "wb") as f:
+          f.write(uploaded_file.getbuffer())
+
+        if doc_type == "FMEA":
+          cursor.execute(
+              """
+                        INSERT INTO documents 
+                        (doc_id, doc_type, orientation, title, description, filename, file_path, prepared_by, 
+                         checker1_email, checker2_email, checker3_email, checker4_email, checker5_email, register_email, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+              (
+                  doc_id,
+                  doc_type,
+                  orientation_val,
+                  doc_title,
+                  doc_description or "-",
+                  uploaded_file.name,
+                  file_path,
+                  user["name"],
+                  c1,
+                  c2,
+                  c3,
+                  c4,
+                  c5,
+                  reg_email,
+                  "PENDING_CHK1",
+              ),
+          )
+
+          conn.commit()
+          conn.close()
+
+          send_next_step_email(c1, doc_id, doc_title, "PDD (Manoch)")
+        else:
+          cursor.execute(
+              """
+                        INSERT INTO documents 
+                        (doc_id, doc_type, orientation, title, description, filename, file_path, prepared_by, 
+                         checker_email, approver_email, register_email, status)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+              (
+                  doc_id,
+                  doc_type,
+                  orientation_val,
+                  doc_title,
+                  doc_description or "-",
+                  uploaded_file.name,
+                  file_path,
+                  user["name"],
+                  chk_email,
+                  app_email,
+                  reg_email,
+                  "PENDING_CHECK",
+              ),
+          )
+
+          conn.commit()
+          conn.close()
+
+          send_next_step_email(chk_email, doc_id, doc_title, "Checker")
+
+        st.success(f"ส่งเอกสารสำเร็จ! รหัสเอกสาร: {doc_id}")
         st.rerun()
 
-    # Admin Reset System
-    if user["role"] == "Register":
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("⚙️ ระบบผู้ดูแล (Admin Tools)")
-        if st.sidebar.button("⚠️ ล้างข้อมูลทั้งหมด (Reset System)"):
+  # ---------------------------------------------------------
+  # CHECK ROLE
+  # ---------------------------------------------------------
+  elif user["role"] == "Check":
+    st.subheader("2. ตรวจสอบเอกสาร (Check)")
+
+    pending_list = get_documents_by_status([
+        "PENDING_CHECK",
+        "PENDING_CHK1",
+        "PENDING_CHK2",
+        "PENDING_CHK3",
+        "PENDING_CHK4",
+        "PENDING_CHK5",
+    ])
+
+    if not pending_list:
+      st.info("ไม่มีเอกสารที่รอการตรวจสอบในขณะนี้")
+
+    for doc in pending_list:
+      with st.expander(
+          f"📌 [{doc['doc_type']}] {doc['doc_id']} - {doc['title']} (สถานะ:"
+          f" {doc['status']})"
+      ):
+        st.write(f"**ผู้จัดทำ:** {doc['prepared_by']}")
+        st.write(f"**รายละเอียด:** {doc['description']}")
+
+        st.markdown("---")
+        display_pdf_download_link(
+            doc["file_path"], doc["filename"], key=f"dl_check_{doc['doc_id']}"
+        )
+        st.markdown("---")
+
+        if doc["doc_type"] == "FMEA":
+          st.markdown("##### 👥 สถานะผู้ตรวจสอบ FMEA:")
+          c1_s = (
+              "✅ " + doc["chk1_name"]
+              if doc["chk1_name"] != "-"
+              else "⏳ รอการตรวจสอบ"
+          )
+          c2_s = (
+              "✅ " + doc["chk2_name"]
+              if doc["chk2_name"] != "-"
+              else "⏳ รอการตรวจสอบ"
+          )
+          c3_s = (
+              "✅ " + doc["chk3_name"]
+              if doc["chk3_name"] != "-"
+              else "⏳ รอการตรวจสอบ"
+          )
+          c4_s = (
+              "✅ " + doc["chk4_name"]
+              if doc["chk4_name"] != "-"
+              else "⏳ รอการตรวจสอบ"
+          )
+          c5_s = (
+              "✅ " + doc["chk5_name"]
+              if doc["chk5_name"] != "-"
+              else "⏳ รอการตรวจสอบ"
+          )
+
+          st.write(
+              f"1. PDD (Manoch): {c1_s} | 2. PCS (Geattisak): {c2_s} | 3. QCD"
+              f" (Maitree): {c3_s}"
+          )
+          st.write(f"4. PRD (Suriya): {c4_s} | 5. PCD (Umaporn): {c5_s}")
+
+          status = doc["status"]
+          can_approve = False
+          next_status = ""
+          next_email = ""
+          next_role = ""
+          chk_field = ""
+
+          if status == "PENDING_CHK1" and user["name"] == "Manoch T.":
+            can_approve = True
+            chk_field = "chk1_name"
+            next_status = "PENDING_CHK2"
+            next_email = doc["checker2_email"]
+            next_role = "PCS (Geattisak)"
+          elif status == "PENDING_CHK2" and user["name"] == "Geattisak S.":
+            can_approve = True
+            chk_field = "chk2_name"
+            next_status = "PENDING_CHK3"
+            next_email = doc["checker3_email"]
+            next_role = "QCD (Maitree)"
+          elif status == "PENDING_CHK3" and user["name"] == "Maitree":
+            can_approve = True
+            chk_field = "chk3_name"
+            next_status = "PENDING_CHK4"
+            next_email = doc["checker4_email"]
+            next_role = "PRD (Suriya)"
+          elif status == "PENDING_CHK4" and user["name"] == "Suriya":
+            can_approve = True
+            chk_field = "chk4_name"
+            next_status = "PENDING_CHK5"
+            next_email = doc["checker5_email"]
+            next_role = "PCD (Umaporn)"
+          elif status == "PENDING_CHK5" and user["name"] == "Umaporn":
+            can_approve = True
+            chk_field = "chk5_name"
+            next_status = "PENDING_REGISTER"
+            next_email = doc["register_email"]
+            next_role = "Register"
+
+          if can_approve:
+            if st.button(
+                f"✅ ลงนามผ่านการตรวจสอบ ({user['name']})",
+                key=f"c_fmea_{doc['doc_id']}",
+                type="primary",
+            ):
+              conn = get_db_connection()
+              cursor = conn.cursor()
+
+              if next_status == "PENDING_REGISTER":
+                cursor.execute(
+                    f"""UPDATE documents 
+                                   SET {chk_field} = ?, 
+                                       status = ?, 
+                                       checked_by = 'FMEA Team Checked', 
+                                       approved_by = 'AUTO_APPROVED' 
+                                   WHERE doc_id = ?""",
+                    (user["name"], next_status, doc["doc_id"]),
+                )
+              else:
+                cursor.execute(
+                    f"UPDATE documents SET {chk_field} = ?, status = ? WHERE doc_id = ?",
+                    (user["name"], next_status, doc["doc_id"]),
+                )
+
+              conn.commit()
+
+              cursor.execute(
+                  "SELECT * FROM documents WHERE doc_id = ?", (doc["doc_id"],)
+              )
+              updated_row = cursor.fetchone()
+              if updated_row:
+                updated_doc = dict(updated_row)
+                add_approval_stamp_dynamic(updated_doc["file_path"], updated_doc)
+
+              conn.close()
+
+              if next_email and next_email.strip():
+                action_text = (
+                    "ขึ้นทะเบียนเอกสาร"
+                    if next_status == "PENDING_REGISTER"
+                    else "ตรวจสอบ"
+                )
+                send_next_step_email(
+                    next_email,
+                    doc["doc_id"],
+                    doc["title"],
+                    next_role,
+                    action_text,
+                )
+
+              if next_status == "PENDING_REGISTER":
+                st.success(
+                    "🎉 อนุมัติครบทั้ง 5 แผนกแล้ว! ประทับตรา APPROVED"
+                    " สีแดงสมบูรณ์และส่งอีเมลหาผู้ขึ้นทะเบียนแล้ว"
+                )
+              else:
+                st.success(
+                    f"บันทึกการลงนามเรียบร้อย ส่งต่ออีเมลให้ {next_role} แล้ว"
+                )
+
+              st.rerun()
+          else:
+            st.info(
+                "ℹ️ ยังไม่ถึงลำดับการอนุมัติของคุณ หรือคุณไม่มีสิทธิ์ลงนามในขั้นตอนนี้"
+            )
+
+        else:
+          if doc["status"] == "PENDING_CHECK":
+            if st.button(
+                "✅ ผ่านการตรวจสอบ",
+                key=f"c_pass_{doc['doc_id']}",
+                type="primary",
+            ):
+              conn = get_db_connection()
+              cursor = conn.cursor()
+              cursor.execute(
+                  "UPDATE documents SET status = 'PENDING_APPROVE', checked_by"
+                  " = ? WHERE doc_id = ?",
+                  (user["name"], doc["doc_id"]),
+              )
+              conn.commit()
+              conn.close()
+
+              send_next_step_email(
+                  doc["approver_email"],
+                  doc["doc_id"],
+                  doc["title"],
+                  "Approver",
+                  "อนุมัติเอกสาร",
+              )
+              st.success(
+                  "ตรวจสอบผ่านเรียบร้อย! ส่งอีเมลต่อไปยังผู้อนุมัติแล้ว"
+              )
+              st.rerun()
+
+  # ---------------------------------------------------------
+  # APPROVE ROLE (สำหรับเอกสารทั่วไป)
+  # ---------------------------------------------------------
+  elif user["role"] == "Approve":
+    st.subheader("3. อนุมัติเอกสารและประทับตรา Stamp (Approve)")
+    pending_list = get_documents_by_status(["PENDING_APPROVE"])
+    if not pending_list:
+      st.info("ไม่มีเอกสารที่รอการอนุมัติในขณะนี้")
+    for doc in pending_list:
+      with st.expander(f"📌 [{doc['doc_type']}] {doc['doc_id']} - {doc['title']}"):
+        st.write(f"**ผู้จัดทำ:** {doc['prepared_by']}")
+        st.write(f"**ผู้ตรวจสอบ:** {doc['checked_by']}")
+
+        st.markdown("---")
+        display_pdf_download_link(
+            doc["file_path"], doc["filename"], key=f"dl_approve_{doc['doc_id']}"
+        )
+        st.markdown("---")
+
+        if st.button(
+            "✅ อนุมัติและประทับตรา Stamp",
+            key=f"a_btn_{doc['doc_id']}",
+            type="primary",
+        ):
+          doc["approved_by"] = user["name"]
+          stamp_ok = add_approval_stamp_dynamic(doc["file_path"], doc)
+          if stamp_ok:
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("DROP TABLE IF EXISTS documents")
-            cursor.execute("DROP TABLE IF EXISTS audit_logs")
+            cursor.execute(
+                "UPDATE documents SET status = 'PENDING_REGISTER', approved_by ="
+                " ? WHERE doc_id = ?",
+                (user["name"], doc["doc_id"]),
+            )
             conn.commit()
             conn.close()
-            
-            if os.path.exists(UPLOAD_DIR):
-                for filename in os.listdir(UPLOAD_DIR):
-                    file_path = os.path.join(UPLOAD_DIR, filename)
-                    try:
-                        if os.path.isfile(file_path) or os.path.islink(file_path):
-                            os.unlink(file_path)
-                        elif os.path.isdir(file_path):
-                            shutil.rmtree(file_path)
-                    except Exception as e:
-                        print(f"Failed to delete {file_path}. Reason: {e}")
 
-            init_db()
-            st.sidebar.success("ล้างข้อมูลระบบเรียบร้อยแล้ว!")
+            send_next_step_email(
+                doc["register_email"],
+                doc["doc_id"],
+                doc["title"],
+                "Register",
+                "ขึ้นทะเบียนเอกสาร",
+            )
+            st.success(
+                "อนุมัติและประทับตรา Stamp สีแดงเรียบร้อยแล้ว!"
+                " ส่งอีเมลต่อไปยังผู้ขึ้นทะเบียนแล้ว"
+            )
             st.rerun()
 
-    st.title("📄 ระบบตรวจสอบ อนุมัติ และขึ้นทะเบียนเอกสาร")
-    st.markdown("---")
+  # ---------------------------------------------------------
+  # REGISTER ROLE
+  # ---------------------------------------------------------
+  elif user["role"] == "Register":
+    st.subheader("4. ขึ้นทะเบียนและออกเลขเอกสาร (Register)")
+    pending_list = get_documents_by_status(["PENDING_REGISTER"])
+    if not pending_list:
+      st.info("ไม่มีเอกสารที่รอการขึ้นทะเบียนในขณะนี้")
+    for doc in pending_list:
+      with st.expander(f"📌 [{doc['doc_type']}] {doc['doc_id']} - {doc['title']}"):
+        st.markdown("---")
+        display_pdf_download_link(
+            doc["file_path"],
+            doc["filename"],
+            key=f"dl_register_{doc['doc_id']}",
+        )
+        st.markdown("---")
 
-    # ---------------------------------------------------------
-    # ROLE: PREPARE (ผู้จัดทำ)
-    # ---------------------------------------------------------
-    if user["role"] == "Prepare":
-        st.subheader("1. จัดทำและส่งเอกสาร (Prepare)")
-        tab1, tab2, tab3 = st.tabs(["📤 ส่งเอกสารใหม่", "❌ เอกสารที่ถูกตีกลับ (Rejected)", "✏️ จัดการ/แก้ไขเอกสารรอตรวจ"])
-        
-        # TAB 1: ส่งเอกสารใหม่
-        with tab1:
-            with st.form("upload_form", clear_on_submit=True):
-                doc_type = st.selectbox("ชนิดเอกสาร (Document Type)", ALL_DOC_TYPES)
-                orientation = st.radio(
-                    "📐 ทิศทางแนวเอกสาร (Orientation สำหรับปั๊ม Stamp):",
-                    options=["Portrait (แนวตั้ง)", "Landscape (แนวนอน/Drawing)"],
-                    horizontal=True
-                )
-                orientation_val = "Portrait" if "Portrait" in orientation else "Landscape"
-                doc_title = st.text_input("ชื่อเรื่อง/ชื่อเอกสาร")
-                doc_description = st.text_area("รายละเอียดเนื้อหาการขอแก้ไข/จัดทำเอกสาร")
-                uploaded_file = st.file_uploader("อัปโหลดไฟล์ PDF", type=["pdf"])
-                submit = st.form_submit_button("ส่งเอกสารเข้าระบบ", type="primary")
+        reg_num = st.text_input(
+            "กำหนดเลขทะเบียนเอกสารทางการ", key=f"reg_num_{doc['doc_id']}"
+        )
+        if st.button(
+            "💾 บันทึกการขึ้นทะเบียน",
+            key=f"r_btn_{doc['doc_id']}",
+            type="primary",
+        ):
+          if reg_num:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE documents SET status = 'COMPLETED', official_reg_number"
+                " = ?, registered_by = ? WHERE doc_id = ?",
+                (reg_num, user["name"], doc["doc_id"]),
+            )
+            conn.commit()
+            conn.close()
+            st.success("ขึ้นทะเบียนเอกสารสมบูรณ์!")
+            st.rerun()
 
-                if submit and doc_title and uploaded_file:
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT COUNT(*) FROM documents")
-                    count = cursor.fetchone()[0]
-                    doc_id = f"TMP-{count + 1:04d}"
-                    file_path = os.path.join(UPLOAD_DIR, f"{doc_id}_{uploaded_file.name}")
-                    
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
+  st.markdown("---")
+  st.subheader("📊 ตารางติดตามสถานะเอกสารทั้งหมด")
+  st.dataframe(get_documents_by_status(), use_container_width=True)
 
-                    cursor.execute('''
-                        INSERT INTO documents (doc_id, doc_type, orientation, title, description, filename, file_path, prepared_by, status)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (doc_id, doc_type, orientation_val, doc_title, doc_description or "-", uploaded_file.name, file_path, user["name"], "PENDING_CHECK"))
-                    conn.commit()
-                    conn.close()
 
-                    add_log(doc_id, user["name"], f"สร้างเอกสาร ({doc_type} / {orientation_val}) และส่งเข้าสถานะรอตรวจสอบ")
-                    
-                    subject = f"[แจ้งเตือน] เอกสารใหม่รอการตรวจสอบ: {doc_id}"
-                    body = (
-                        f"เรียน คุณผู้ตรวจสอบ (Check)\n\n"
-                        f"มีเอกสารใหม่ส่งเข้าระบบรอการตรวจสอบ:\n"
-                        f"📌 รหัสเอกสาร: {doc_id}\n"
-                        f"🏷️ ชนิดเอกสาร: {doc_type}\n"
-                        f"📐 แนววางเอกสาร: {orientation_val}\n"
-                        f"📝 ชื่อเรื่อง: {doc_title}\n"
-                        f"📋 รายละเอียด: {doc_description or '-'}\n"
-                        f"👤 ผู้ส่ง: {user['name']}\n\n"
-                        f"🔗 คลิกเพื่อดำเนินการ: {APP_URL}"
-                    )
-                    send_email_notification(USERS["Manoch"]["email"], subject, body)
-                    st.success(f"ส่งเอกสารสำเร็จ! รหัสเอกสาร: {doc_id}")
-                    st.rerun()
-
-        # TAB 2: แสดงเฉพาะเอกสารที่ถูกตีกลับ (REJECTED)
-        with tab2:
-            rejected_docs = get_documents_by_status(["REJECTED"])
-            if rejected_docs:
-                st.warning(f"⚠️ มีเอกสารที่ถูกตีกลับจำนวน {len(rejected_docs)} รายการ")
-                for doc in rejected_docs:
-                    with st.expander(f"🔴 [{doc['doc_id']}] {doc['title']} (ชนิด: {doc['doc_type']})", expanded=True):
-                        st.error(f"**สถานะ:** เอกสารถูกตีกลับ (REJECTED)")
-                        st.write(f"**รายละเอียดเดิม:** {doc.get('description', '-')}")
-                        
-                        # ดึง Log สาเหตุการตีกลับล่าสุด
-                        conn = get_db_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT action_by, comment, timestamp FROM audit_logs WHERE doc_id = ? AND action LIKE '%ตีกลับ%' OR action LIKE '%ไม่อนุมัติ%' ORDER BY id DESC LIMIT 1", (doc['doc_id'],))
-                        last_log = cursor.fetchone()
-                        conn.close()
-                        if last_log:
-                            st.info(f"💬 **เหตุผลที่ตีกลับโดย {last_log['action_by']} ({last_log['timestamp']}):** {last_log['comment'] or 'ไม่ได้ระบุเหตุผล'}")
-
-                        st.markdown("---")
-                        st.subheader("📝 แก้ไขและส่งเอกสารใหม่")
-                        
-                        current_type = doc.get('doc_type', 'OM')
-                        type_index = ALL_DOC_TYPES.index(current_type) if current_type in ALL_DOC_TYPES else 0
-                        new_doc_type = st.selectbox("แก้ไขชนิดเอกสาร", ALL_DOC_TYPES, index=type_index, key=f"rej_edit_type_{doc['doc_id']}")
-                        
-                        curr_orient = doc.get('orientation', 'Portrait')
-                        orient_index = 0 if curr_orient == "Portrait" else 1
-                        new_orient = st.radio(
-                            "แก้ไขทิศทางแนวเอกสาร",
-                            options=["Portrait (แนวตั้ง)", "Landscape (แนวนอน/Drawing)"],
-                            index=orient_index,
-                            horizontal=True,
-                            key=f"rej_edit_orient_{doc['doc_id']}"
-                        )
-                        new_orient_val = "Portrait" if "Portrait" in new_orient else "Landscape"
-
-                        new_title = st.text_input("แก้ไขชื่อเอกสาร", value=doc['title'], key=f"rej_edit_title_{doc['doc_id']}")
-                        new_description = st.text_area("รายละเอียด/เนื้อหาที่แก้ไขเพิ่มเติม", value=doc.get('description', '-'), key=f"rej_edit_desc_{doc['doc_id']}")
-                        new_file = st.file_uploader("อัปโหลดไฟล์ PDF ใหม่ (เพื่อแก้ไข)", type=["pdf"], key=f"rej_edit_file_{doc['doc_id']}")
-                        
-                        col_save, col_del = st.columns([1, 1])
-                        if col_save.button("🔄 บันทึกแก้ไข & ส่งกลับไปตรวจสอบอีกครั้ง", key=f"rej_btn_save_{doc['doc_id']}", type="primary"):
-                            conn = get_db_connection()
-                            cursor = conn.cursor()
-                            file_path = doc["file_path"]
-                            filename = doc["filename"]
-                            if new_file:
-                                file_path = os.path.join(UPLOAD_DIR, f"{doc['doc_id']}_{new_file.name}")
-                                with open(file_path, "wb") as f: 
-                                    f.write(new_file.getbuffer())
-                                filename = new_file.name
-
-                            cursor.execute("UPDATE documents SET doc_type = ?, orientation = ?, title = ?, description = ?, filename = ?, file_path = ?, status = 'PENDING_CHECK' WHERE doc_id = ?", (new_doc_type, new_orient_val, new_title, new_description or "-", filename, file_path, doc['doc_id']))
-                            conn.commit()
-                            conn.close()
-                            
-                            add_log(doc['doc_id'], user["name"], "แก้ไขเอกสารตีกลับ และส่งกลับไปรอตรวจสอบใหม่")
-                            
-                            # แจ้งเตือนทาง Mail หาผู้ตรวจซ้ำ
-                            subject = f"[แจ้งเตือน] เอกสารแก้ไขส่งกลับมาตรวจสอบ: {doc['doc_id']}"
-                            body = f"เอกสารรหัส {doc['doc_id']} ({new_title}) ได้รับการแก้ไขและส่งกลับเข้าสู่ขั้นตอนการตรวจสอบเรียบร้อยแล้ว\n\n🔗 คลิก: {APP_URL}"
-                            send_email_notification(USERS["Manoch"]["email"], subject, body)
-                            
-                            st.success("ส่งเอกสารแก้ไขเรียบร้อยแล้ว!")
-                            st.rerun()
-
-                        if col_del.button("🗑️ ยกเลิก/ลบเอกสารนี้", key=f"rej_btn_del_{doc['doc_id']}"):
-                            conn = get_db_connection()
-                            cursor = conn.cursor()
-                            cursor.execute("DELETE FROM documents WHERE doc_id = ?", (doc['doc_id'],))
-                            cursor.execute("DELETE FROM audit_logs WHERE doc_id = ?", (doc['doc_id'],))
-                            conn.commit()
-                            conn.close()
-                            if os.path.exists(doc["file_path"]): 
-                                os.remove(doc["file_path"])
-                            st.rerun()
-            else:
-                st.info("🎉 ไม่มีรายการเอกสารที่ถูกตีกลับ")
-
-        # TAB 3: เอกสารที่อยู่ระหว่างรอตรวจสอบ (PENDING_CHECK)
-        with tab3:
-            pending_docs = get_documents_by_status(["PENDING_CHECK"])
-            if pending_docs:
-                for doc in pending_docs:
-                    with st.expander(f"⚙️ [{doc['doc_id']}] {doc['title']} (สถานะ: รอตรวจสอบ)"):
-                        new_title = st.text_input("แก้ไขชื่อเอกสาร", value=doc['title'], key=f"p_edit_title_{doc['doc_id']}")
-                        new_description = st.text_area("แก้ไขรายละเอียด", value=doc.get('description', '-'), key=f"p_edit_desc_{doc['doc_id']}")
-                        
-                        col_save, col_del = st.columns([1, 1])
-                        if col_save.button("💾 บันทึกการแก้ไข", key=f"p_btn_save_{doc['doc_id']}", type="primary"):
-                            conn = get_db_connection()
-                            cursor = conn.cursor()
-                            cursor.execute("UPDATE documents SET title = ?, description = ? WHERE doc_id = ?", (new_title, new_description or "-", doc['doc_id']))
-                            conn.commit()
-                            conn.close()
-                            add_log(doc['doc_id'], user["name"], "แก้ไขข้อมูลเอกสารระหว่างรอตรวจ")
-                            st.success("บันทึกการแก้ไขเรียบร้อย!")
-                            st.rerun()
-
-                        if col_del.button("🗑️ ลบเอกสาร", key=f"p_btn_del_{doc['doc_id']}"):
-                            conn = get_db_connection()
-                            cursor = conn.cursor()
-                            cursor.execute("DELETE FROM documents WHERE doc_id = ?", (doc['doc_id'],))
-                            cursor.execute("DELETE FROM audit_logs WHERE doc_id = ?", (doc['doc_id'],))
-                            conn.commit()
-                            conn.close()
-                            if os.path.exists(doc["file_path"]): os.remove(doc["file_path"])
-                            st.rerun()
-            else:
-                st.info("ไม่มีเอกสารที่รอตรวจสอบอยู่ในขณะนี้")
-
-    # ---------------------------------------------------------
-    # ROLE: CHECK (ผู้ตรวจสอบ)
-    # ---------------------------------------------------------
-    elif user["role"] == "Check":
-        st.subheader("2. ตรวจสอบความถูกต้องเอกสาร (Check)")
-        pending_list = get_documents_by_status(["PENDING_CHECK"])
-        if pending_list:
-            for doc in pending_list:
-                with st.expander(f"📌 {doc['doc_id']} [{doc.get('doc_type', 'OM')}] - {doc['title']} (ผู้จัดทำ: {doc['prepared_by']})"):
-                    st.markdown(f"**🏷️ ชนิดเอกสาร:** `{doc.get('doc_type', 'OM')}` | **📐 แนวเอกสาร:** `{doc.get('orientation', 'Portrait')}`")
-                    st.markdown(f"**📋 รายละเอียด:** {doc.get('description', '-')}")
-                    if os.path.exists(doc["file_path"]):
-                        with open(doc["file_path"], "rb") as f:
-                            st.download_button("📥 ดาวน์โหลด/ดูไฟล์ PDF", f, file_name=doc["filename"], key=f"dl_{doc['doc_id']}")
-                    
-                    comment = st.text_area("ความเห็น / หมายเหตุ", key=f"c_com_{doc['doc_id']}")
-                    col1, col2 = st.columns(2)
-                    if col1.button("✅ ตรวจสอบผ่าน", key=f"c_pass_{doc['doc_id']}", type="primary"):
-                        conn = get_db_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("UPDATE documents SET status = 'PENDING_APPROVE', checked_by = ? WHERE doc_id = ?", (user["name"], doc['doc_id']))
-                        conn.commit()
-                        conn.close()
-                        add_log(doc['doc_id'], user["name"], "ตรวจสอบผ่าน (Check Pass)", comment)
-                        
-                        subject = f"[แจ้งเตือน] เอกสารผ่านการตรวจสอบแล้ว: {doc['doc_id']}"
-                        body = (
-                            f"เรียน คุณผู้อนุมัติ (Approve)\n\n"
-                            f"เอกสารได้รับการตรวจสอบเรียบร้อยแล้ว และรอการอนุมัติ:\n"
-                            f"📌 รหัสเอกสาร: {doc['doc_id']}\n"
-                            f"📝 เรื่อง: {doc['title']}\n"
-                            f"🔍 ผู้ตรวจสอบ: {user['name']}\n"
-                            f"💬 หมายเหตุ: {comment or '-'}\n\n"
-                            f"🔗 คลิกเพื่ออนุมัติเอกสาร: {APP_URL}"
-                        )
-                        send_email_notification(USERS["Geattisak"]["email"], subject, body)
-                        st.rerun()
-                        
-                    if col2.button("❌ ตีกลับแก้ไข", key=f"c_rej_{doc['doc_id']}"):
-                        conn = get_db_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("UPDATE documents SET status = 'REJECTED' WHERE doc_id = ?", (doc['doc_id'],))
-                        conn.commit()
-                        conn.close()
-                        add_log(doc['doc_id'], user["name"], "ตีกลับแก้ไข (Rejected)", comment)
-                        
-                        subject = f"[แจ้งเตือน] เอกสารของคุณถูกตีกลับให้แก้ไข: {doc['doc_id']}"
-                        body = (
-                            f"เรียน คุณผู้จัดทำ (Prepare)\n\n"
-                            f"เอกสารของคุณไม่ผ่านการตรวจสอบ และถูกตีกลับเพื่อแก้ไข:\n"
-                            f"📌 รหัสเอกสาร: {doc['doc_id']}\n"
-                            f"📝 เรื่อง: {doc['title']}\n"
-                            f"❌ ผู้ตรวจสอบ: {user['name']}\n"
-                            f"💬 สาเหตุ/ข้อเสนอแนะ: {comment or '-'}\n\n"
-                            f"🔗 คลิกเพื่อแก้ไขเอกสาร: {APP_URL}"
-                        )
-                        send_email_notification(USERS["Thanawat"]["email"], subject, body)
-                        st.rerun()
-        else:
-            st.info("ไม่มีรายการเอกสารที่รอการตรวจสอบ")
-
-    # ---------------------------------------------------------
-    # ROLE: APPROVE (ผู้อนุมัติ)
-    # ---------------------------------------------------------
-    elif user["role"] == "Approve":
-        st.subheader("3. อนุมัติเอกสาร (Approve)")
-        pending_list = get_documents_by_status(["PENDING_APPROVE"])
-        if pending_list:
-            for doc in pending_list:
-                doc_type = doc.get('doc_type', 'OM')
-                doc_orient = doc.get('orientation', 'Portrait')
-                
-                with st.expander(f"📌 {doc['doc_id']} [{doc_type}] - {doc['title']} (ผู้ตรวจสอบ: {doc['checked_by']})"):
-                    st.markdown(f"**🏷️ ชนิดเอกสาร:** `{doc_type}` | **📐 แนวเอกสาร:** `{doc_orient}`")
-                    st.markdown(f"**📋 รายละเอียด:** {doc.get('description', '-')}")
-                    if os.path.exists(doc["file_path"]):
-                        with open(doc["file_path"], "rb") as f:
-                            st.download_button("📥 ดาวน์โหลด/ดูไฟล์ PDF ต้นฉบับ", f, file_name=doc["filename"], key=f"dl_a_{doc['doc_id']}")
-                            
-                    comment = st.text_area("ความเห็นผู้อนุมัติ", key=f"a_com_{doc['doc_id']}")
-                    col1, col2 = st.columns(2)
-                    
-                    if col1.button("✅ อนุมัติเอกสาร (พร้อมปั๊มตรา Stamp)", key=f"a_pass_{doc['doc_id']}", type="primary"):
-                        stamp_success = add_approval_stamp(doc["file_path"], orientation=doc_orient)
-                        
-                        if stamp_success:
-                            conn = get_db_connection()
-                            cursor = conn.cursor()
-                            cursor.execute("UPDATE documents SET status = 'PENDING_REGISTER', approved_by = ? WHERE doc_id = ?", (user["name"], doc['doc_id']))
-                            conn.commit()
-                            conn.close()
-                            
-                            add_log(doc['doc_id'], user["name"], "อนุมัติเอกสาร และประทับตรา Stamp เรียบร้อยแล้ว", comment)
-                            
-                            subject = f"[แจ้งเตือน] เอกสารได้รับการอนุมัติเรียบร้อยแล้ว: {doc['doc_id']}"
-                            body = (
-                                f"เรียน คุณเจ้าหน้าที่ขึ้นทะเบียน (Register & Print)\n\n"
-                                f"เอกสารได้รับการอนุมัติและประทับตรา Stamp เรียบร้อยแล้ว พร้อมขึ้นทะเบียน:\n"
-                                f"📌 รหัสเอกสาร: {doc['doc_id']}\n"
-                                f"🏷️ ชนิดเอกสาร: {doc_type}\n"
-                                f"📝 เรื่อง: {doc['title']}\n"
-                                f"✍️ ผู้อนุมัติ: {user['name']}\n"
-                                f"💬 ความเห็น: {comment or '-'}\n\n"
-                                f"🔗 คลิกเพื่อดำเนินการขึ้นทะเบียน: {APP_URL}"
-                            )
-                            send_email_notification(USERS["Sudarat"]["email"], subject, body)
-                            st.success("อนุมัติเอกสารและประทับตรา Stamp เรียบร้อยแล้ว!")
-                            st.rerun()
-                        
-                    if col2.button("❌ ไม่อนุมัติ", key=f"a_rej_{doc['doc_id']}"):
-                        conn = get_db_connection()
-                        cursor = conn.cursor()
-                        cursor.execute("UPDATE documents SET status = 'REJECTED' WHERE doc_id = ?", (doc['doc_id'],))
-                        conn.commit()
-                        conn.close()
-                        add_log(doc['doc_id'], user["name"], "ไม่อนุมัติ (Approved Reject)", comment)
-                        
-                        subject = f"[แจ้งเตือน] เอกสารไม่ได้รับการอนุมัติ: {doc['doc_id']}"
-                        body = (
-                            f"เรียน คุณผู้จัดทำ (Prepare)\n\n"
-                            f"เอกสารของคุณไม่ได้รับการอนุมัติ:\n"
-                            f"📌 รหัสเอกสาร: {doc['doc_id']}\n"
-                            f"📝 เรื่อง: {doc['title']}\n"
-                            f"❌ ผู้อนุมัติ: {user['name']}\n"
-                            f"💬 เหตุผล: {comment or '-'}\n\n"
-                            f"🔗 คลิกเพื่อเข้าระบบ: {APP_URL}"
-                        )
-                        send_email_notification(USERS["Thanawat"]["email"], subject, body)
-                        st.rerun()
-        else:
-            st.info("ไม่มีรายการเอกสารที่รอการอนุมัติ")
-
-    # ---------------------------------------------------------
-    # ROLE: REGISTER (ขึ้นทะเบียน & สั่งพิมพ์)
-    # ---------------------------------------------------------
-    elif user["role"] == "Register":
-        st.subheader("4. ขึ้นทะเบียนและสั่งพิมพ์เอกสาร (Register & Print)")
-        pending_list = get_documents_by_status(["PENDING_REGISTER"])
-        if pending_list:
-            for doc in pending_list:
-                with st.expander(f"📌 {doc['doc_id']} [{doc.get('doc_type', 'OM')}] - {doc['title']} (อนุมัติโดย: {doc['approved_by']})"):
-                    st.markdown(f"**🏷️ ชนิดเอกสาร:** `{doc.get('doc_type', 'OM')}` | **📐 แนวเอกสาร:** `{doc.get('orientation', 'Portrait')}`")
-                    st.markdown(f"**📋 รายละเอียด:** {doc.get('description', '-')}")
-                    reg_no = st.text_input("กำหนดเลขทะเบียนเอกสาร (เช่น DAR-2026-001)", key=f"r_num_{doc['doc_id']}")
-                    
-                    if os.path.exists(doc["file_path"]):
-                        with open(doc["file_path"], "rb") as f:
-                            pdf_bytes = f.read()
-                            st.download_button(
-                                label="📥 ดาวน์โหลดไฟล์ PDF (ที่มีตรา Stamp อนุมัติแล้ว)", 
-                                data=pdf_bytes, 
-                                file_name=f"APPROVED_{doc['filename']}", 
-                                mime="application/pdf",
-                                key=f"dl_r_{doc['doc_id']}"
-                            )
-
-                    if st.button("🖨️ บันทึกขึ้นทะเบียน & ยืนยันการพิมพ์", key=f"r_btn_{doc['doc_id']}", type="primary"):
-                        if reg_no:
-                            conn = get_db_connection()
-                            cursor = conn.cursor()
-                            cursor.execute("UPDATE documents SET status = 'REGISTERED_AND_PRINTED', official_reg_number = ?, registered_by = ? WHERE doc_id = ?", (reg_no, user["name"], doc['doc_id']))
-                            conn.commit()
-                            conn.close()
-                            
-                            add_log(doc['doc_id'], user["name"], f"ขึ้นทะเบียนเลข {reg_no} และสั่งพิมพ์เรียบร้อยแล้ว")
-                            
-                            subject = f"[แจ้งเตือน] ขึ้นทะเบียนเอกสารสำเร็จ: {reg_no}"
-                            body = (
-                                f"เรียน คุณผู้จัดทำ (Prepare)\n\n"
-                                f"เอกสารของคุณได้รับการขึ้นทะเบียนและสั่งพิมพ์เรียบร้อยแล้ว:\n"
-                                f"🏷️ เลขทะเบียนเอกสาร: {reg_no}\n"
-                                f"📌 รหัสอ้างอิง: {doc['doc_id']}\n"
-                                f"📝 เรื่อง: {doc['title']}\n"
-                                f"👤 ผู้ขึ้นทะเบียน: {user['name']}\n\n"
-                                f"🔗 ตรวจสอบสถานะในระบบ: {APP_URL}"
-                            )
-                            send_email_notification(USERS["Thanawat"]["email"], subject, body)
-                            st.success("ขึ้นทะเบียนและบันทึกเรียบร้อยแล้ว")
-                            st.rerun()
-                        else:
-                            st.warning("กรุณาระบุเลขทะเบียนเอกสาร")
-        else:
-            st.info("ไม่มีรายการเอกสารรอการขึ้นทะเบียน")
-
-    # ---------------------------------------------------------
-    # Dashboard & Audit Logs Viewer (สำหรับติดตามสถานะ)
-    # ---------------------------------------------------------
-    st.markdown("---")
-    st.subheader("📊 ตารางติดตามสถานะเอกสารทั้งหมด (DB View)")
-    all_docs = get_documents_by_status()
-    if all_docs:
-        st.dataframe(all_docs, use_container_width=True)
-        with st.expander("📜 ดูประวัติการดำเนินการอย่างละเอียด (Audit Logs)"):
-            doc_ids = [d["doc_id"] for d in all_docs]
-            selected_doc_id = st.selectbox("เลือกเอกสารเพื่อดูประวัติ", doc_ids)
-            if selected_doc_id:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute("SELECT * FROM audit_logs WHERE doc_id = ? ORDER BY id ASC", (selected_doc_id,))
-                logs = cursor.fetchall()
-                conn.close()
-                for log in logs:
-                    st.write(f"- **[{log['timestamp']}] {log['action_by']}**: {log['action']} *(หมายเหตุ: {log['comment'] or '-'})*")
-    else:
-        st.caption("ยังไม่มีข้อมูลเอกสารในระบบ")
-
-# -------------------------------------------------------------
-# 8. Entry Point
-# -------------------------------------------------------------
+# Run Application
 if st.session_state.authenticated_user is None:
-    login_screen()
+  login_screen()
 else:
-    main_app()
+  main_app()
