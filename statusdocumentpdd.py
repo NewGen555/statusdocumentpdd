@@ -13,13 +13,12 @@ DB_FILE = "document_approval.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # สร้างตารางเอกสาร
+    # สร้างตารางเอกสาร (ตัด amount ออกแล้ว)
     c.execute('''
         CREATE TABLE IF NOT EXISTS documents (
             doc_id TEXT PRIMARY KEY,
             title TEXT,
             doc_type TEXT,
-            amount REAL,
             prepared_by TEXT,
             status TEXT,
             current_step INTEGER,
@@ -107,10 +106,9 @@ def display_pdf(pdf_data):
     pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="500" type="application/pdf"></iframe>'
     st.markdown(pdf_display, unsafe_allow_html=True)
 
-# --- 4. MAIN APPLICATION logic ---
+# --- 4. MAIN APPLICATION LOGIC ---
 st.title("📄 ระบบเสนออนุมัติเอกสาร (Flow Approval System)")
 
-# Define the global flow sequence
 DEFAULT_FLOW = ["Prepare", "Check", "Approve", "Register"]
 
 # ---------------------------------------------------------
@@ -125,7 +123,6 @@ if current_user["role"] == "Prepare":
             doc_id = f"DOC-{datetime.now().strftime('%Y%m%d%H%M%S')}"
             title = st.text_input("ชื่อเรื่อง / หัวข้อเอกสาร")
             doc_type = st.selectbox("ประเภทเอกสาร", ["บันทึกข้อความ", "ใบเบิกจ่าย", "สัญญาจ้าง", "อื่นๆ"])
-            amount = st.number_input("จำนวนเงิน (บาท) (ถ้ามี)", min_value=0.0, value=0.0)
             uploaded_file = st.file_uploader("แนบไฟล์เอกสาร (PDF เท่านั้น)", type=["pdf"])
 
             submit = st.form_submit_button("ส่งเอกสารเพื่อเสนออนุมัติ")
@@ -138,10 +135,10 @@ if current_user["role"] == "Prepare":
                     conn = sqlite3.connect(DB_FILE)
                     c = conn.cursor()
                     c.execute('''
-                        INSERT INTO documents (doc_id, title, doc_type, amount, prepared_by, status, current_step, flow_json, pdf_data, pdf_name, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO documents (doc_id, title, doc_type, prepared_by, status, current_step, flow_json, pdf_data, pdf_name, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
-                        doc_id, title, doc_type, amount, current_user["name"],
+                        doc_id, title, doc_type, current_user["name"],
                         "PENDING_CHECK", 1, json.dumps(DEFAULT_FLOW),
                         pdf_bytes, uploaded_file.name, datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     ))
@@ -153,7 +150,6 @@ if current_user["role"] == "Prepare":
                     st.rerun()
 
     with tab2:
-        # กรองเฉพาะเอกสารของ User นี้เท่านั้นที่อยู่ในสถานะ PENDING_CHECK หรือ REJECTED
         all_editable = get_documents_by_status(["PENDING_CHECK", "REJECTED"])
         editable_docs = [doc for doc in all_editable if doc['prepared_by'] == current_user['name']]
 
@@ -161,9 +157,8 @@ if current_user["role"] == "Prepare":
             for doc in editable_docs:
                 status_color = "red" if doc['status'] == 'REJECTED' else "orange"
                 with st.expander(f"⚙️ {doc['doc_id']} - {doc['title']} (สถานะ: :{status_color}[{doc['status']}])"):
-                    st.write(f"**ประเภท:** {doc['doc_type']} | **ยอดเงิน:** {doc['amount']:,.2f} บาท | **วันที่สร้าง:** {doc['created_at']}")
+                    st.write(f"**ประเภท:** {doc['doc_type']} | **วันที่สร้าง:** {doc['created_at']}")
                     
-                    # แสดงประวัติการตีกลับ/ความเห็นล่าสุด
                     logs = get_logs(doc['doc_id'])
                     if logs:
                         last_log = logs[-1]
@@ -178,7 +173,6 @@ if current_user["role"] == "Prepare":
                         with st.form(f"edit_form_{doc['doc_id']}"):
                             st.markdown("##### ✏️ แก้ไขและส่งใหม่")
                             new_title = st.text_input("ชื่อเรื่อง", value=doc['title'])
-                            new_amount = st.number_input("จำนวนเงิน", value=doc['amount'])
                             new_file = st.file_uploader("แนบไฟล์ PDF ใหม่ (ถ้าต้องการเปลี่ยน)", type=["pdf"], key=f"file_{doc['doc_id']}")
                             resubmit = st.form_submit_button("ส่งเอกสารอีกครั้ง")
 
@@ -190,15 +184,15 @@ if current_user["role"] == "Prepare":
                                     pdf_name = new_file.name
                                     c.execute('''
                                         UPDATE documents 
-                                        SET title=?, amount=?, pdf_data=?, pdf_name=?, status='PENDING_CHECK', current_step=1
+                                        SET title=?, pdf_data=?, pdf_name=?, status='PENDING_CHECK', current_step=1
                                         WHERE doc_id=?
-                                    ''', (new_title, new_amount, pdf_bytes, pdf_name, doc['doc_id']))
+                                    ''', (new_title, pdf_bytes, pdf_name, doc['doc_id']))
                                 else:
                                     c.execute('''
                                         UPDATE documents 
-                                        SET title=?, amount=?, status='PENDING_CHECK', current_step=1
+                                        SET title=?, status='PENDING_CHECK', current_step=1
                                         WHERE doc_id=?
-                                    ''', (new_title, new_amount, doc['doc_id']))
+                                    ''', (new_title, doc['doc_id']))
                                 conn.commit()
                                 conn.close()
                                 add_log(doc['doc_id'], current_user["name"], current_user["role"], "Resubmitted", "แก้ไขเอกสารและส่งเข้าสู่ระบบอีกครั้ง")
@@ -220,11 +214,10 @@ if current_user["role"] == "Prepare":
             st.info("ไม่พบเอกสารที่ถูกตีกลับหรือรอตรวจสอบของคุณ")
 
     with tab3:
-        # แสดงเอกสารทั้งหมดที่ user นี้เป็นผู้จัดทำ
         all_docs = get_documents_by_status()
         my_docs = [doc for doc in all_docs if doc['prepared_by'] == current_user['name']]
         if my_docs:
-            df_my_docs = pd.DataFrame(my_docs)[['doc_id', 'title', 'doc_type', 'amount', 'status', 'created_at']]
+            df_my_docs = pd.DataFrame(my_docs)[['doc_id', 'title', 'doc_type', 'status', 'created_at']]
             st.dataframe(df_my_docs, use_container_width=True)
         else:
             st.caption("ยังไม่มีประวัติการส่งเอกสาร")
@@ -243,7 +236,6 @@ elif current_user["role"] == "Check":
                 with col1:
                     st.write(f"**ผู้จัดทำ:** {doc['prepared_by']}")
                     st.write(f"**ประเภท:** {doc['doc_type']}")
-                    st.write(f"**จำนวนเงิน:** {doc['amount']:,.2f} บาท")
                     st.write(f"**วันที่สร้าง:** {doc['created_at']}")
                     if doc['pdf_data']:
                         display_pdf(doc['pdf_data'])
@@ -292,7 +284,7 @@ elif current_user["role"] == "Approve":
                 col1, col2 = st.columns([1, 1])
                 with col1:
                     st.write(f"**ผู้จัดทำ:** {doc['prepared_by']}")
-                    st.write(f"**ยอดเงิน:** {doc['amount']:,.2f} บาท")
+                    st.write(f"**ประเภท:** {doc['doc_type']}")
                     if doc['pdf_data']:
                         display_pdf(doc['pdf_data'])
 
@@ -342,7 +334,7 @@ elif current_user["role"] == "Register":
     if approved_docs:
         for doc in approved_docs:
             with st.expander(f"📦 รอลงรับ: {doc['doc_id']} - {doc['title']}"):
-                st.write(f"**ผู้จัดทำ:** {doc['prepared_by']} | **ยอดอนุมัติ:** {doc['amount']:,.2f} บาท")
+                st.write(f"**ผู้จัดทำ:** {doc['prepared_by']} | **ประเภท:** {doc['doc_type']}")
                 if st.button("📥 ลงรับและจัดเก็บสำเร็จ", key=f"reg_{doc['doc_id']}", type="primary"):
                     conn = sqlite3.connect(DB_FILE)
                     c = conn.cursor()
@@ -361,7 +353,7 @@ st.subheader("📊 ติดตามสถานะและประวัต�
 all_docs = get_documents_by_status()
 
 if all_docs:
-    df_all = pd.DataFrame(all_docs)[['doc_id', 'title', 'doc_type', 'amount', 'prepared_by', 'status', 'created_at']]
+    df_all = pd.DataFrame(all_docs)[['doc_id', 'title', 'doc_type', 'prepared_by', 'status', 'created_at']]
     st.dataframe(df_all, use_container_width=True)
 
     selected_doc_id = st.selectbox("เลือกเอกสารเพื่อดูประวัติการดำเนินการ (Audit Trail):", [d['doc_id'] for d in all_docs])
