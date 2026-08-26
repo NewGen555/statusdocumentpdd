@@ -82,14 +82,14 @@ def send_next_step_email(
   email_body = f"""
     <html>
       <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-        <h3 style="color: #004085;">เรียน ท่านผู้มีสิทธิ์อนุมัติ ({role_name})</h3>
-        <p>มีเอกสารรอการ{action_hint}ในลำดับของท่าน รายละเอียดดังนี้:</p>
+        <h3 style="color: #004085;">เรียน ท่านผู้มีสิทธิ์ ({role_name})</h3>
+        <p>มีเอกสารที่เกี่ยวข้องกับท่าน รายละเอียดดังนี้:</p>
         <ul>
           <li><b>รหัสเอกสาร:</b> {doc_id}</li>
           <li><b>ชื่อเรื่อง:</b> {doc_title}</li>
-          <li><b>สถานะปัจจุบัน:</b> รอการ{action_hint} ({role_name})</li>
+          <li><b>สถานะ:</b> {action_hint} ({role_name})</li>
         </ul>
-        <p>กรุณาคลิกที่ปุ่มด้านล่างเพื่อเข้าสู่ระบบเพื่อดำเนินการ:</p>
+        <p>กรุณาคลิกที่ปุ่มด้านล่างเพื่อเข้าสู่ระบบ:</p>
         <p style="margin-top: 20px;">
           <a href="{APP_URL}" 
              style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
@@ -100,10 +100,7 @@ def send_next_step_email(
     </html>
     """
   send_email_notification(
-      target_email,
-      f"[PDD System] เอกสารขอรับการ{action_hint} ({role_name}):"
-      f" {doc_title}",
-      email_body,
+      target_email, f"[PDD System] แจ้งเตือนเอกสาร ({role_name}): {doc_title}", email_body
   )
 
 
@@ -244,7 +241,6 @@ def add_approval_stamp_dynamic(pdf_path, doc_info):
       )
       page.draw_rect(inner_rect, color=red_color, width=1.0)
 
-      # ขยายความสูงและปรับฟอนต์คำว่า APPROVED ให้แสดงผลสมบูรณ์
       text_rect = fitz.Rect(
           stamp_x0, stamp_y0 + 4, stamp_x0 + stamp_w, stamp_y0 + 30
       )
@@ -320,6 +316,7 @@ def init_db():
             checker5_email TEXT DEFAULT '',
             approver_email TEXT DEFAULT '',
             register_email TEXT DEFAULT '',
+            reject_comment TEXT DEFAULT '-',
             status TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -337,12 +334,13 @@ def init_db():
       "checker3_email",
       "checker4_email",
       "checker5_email",
+      "reject_comment",
   ]
   for col in cols_to_check:
     try:
       cursor.execute(f"ALTER TABLE documents ADD COLUMN {col} TEXT DEFAULT '-'")
     except sqlite3.OperationalError:
-      pass  # ถ้ามีคอลัมน์อยู่แล้ว ข้ามไปไม่ให้เกิด error
+      pass
 
   conn.commit()
   conn.close()
@@ -406,6 +404,15 @@ def get_documents_by_status(statuses=None):
 # 6. Main App Process
 # -------------------------------------------------------------
 def main_app():
+  # === เพิ่ม 3 บรรทัดนี้เพื่อลบฐานข้อมูลเก่าทิ้งอัตโนมัติ ===
+  if os.path.exists("document_approval.db"):
+    os.remove("document_approval.db")
+  # =======================================================
+
+  st.set_page_config(
+      page_title="Document Approval System", page_icon="📄", layout="wide"
+  )
+  init_db()  # บรรทัดนี้จะสร้างฐานข้อมูลใหม่ที่ถูกต้องขึ้นมาให้ทันที
   user = st.session_state.authenticated_user
   st.sidebar.title("👤 ผู้ใช้งานปัจจุบัน")
   st.sidebar.write(f"**ชื่อ:** {user['name']}")
@@ -423,6 +430,35 @@ def main_app():
   # ---------------------------------------------------------
   if user["role"] == "Prepare":
     st.subheader("1. จัดทำและส่งเอกสาร (Prepare)")
+
+    # แสดงรายการที่ถูกตีกลับมาแก้ไข
+    rejected_docs = [
+        d
+        for d in get_documents_by_status(["REJECTED"])
+        if d["prepared_by"] == user["name"]
+    ]
+    if rejected_docs:
+      st.error("⚠️ มีเอกสารที่ถูกตีกลับมาแก้ไข กรุณาตรวจสอบคอมเมนต์ด้านล่าง")
+      for r_doc in rejected_docs:
+        with st.expander(
+            f"❌ เอกสารถูกตีกลับ: [{r_doc['doc_id']}] {r_doc['title']}"
+        ):
+          st.write(
+              f"**💬 คอมเมนต์จากผู้ตรวจสอบ/ผู้อนุมัติ:**"
+              f" `{r_doc.get('reject_comment', '-')}`"
+          )
+          st.write(
+              "*(ท่านสามารถส่งเอกสารใหม่โดยใช้รหัสหรือชื่อเรื่องเดิม หรือปรับปรุงไฟล์เพื่อส่งใหม่ได้)*"
+          )
+          if st.button("🗑️ ลบรายการที่ถูกตีกลับนี้ทิ้ง", key=f"del_rej_{r_doc['doc_id']}"):
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM documents WHERE doc_id = ?", (r_doc["doc_id"],))
+            conn.commit()
+            conn.close()
+            st.success("ลบรายการเรียบร้อยแล้ว")
+            st.rerun()
+
     doc_type = st.selectbox("ชนิดเอกสาร (Document Type)", ALL_DOC_TYPES)
     orientation_val = (
         "Landscape" if doc_type in DOC_TYPES_LANDSCAPE else "Portrait"
@@ -689,100 +725,135 @@ def main_app():
             next_role = "Register"
 
           if can_approve:
-            if st.button(
-                f"✅ ลงนามผ่านการตรวจสอบ ({user['name']})",
-                key=f"c_fmea_{doc['doc_id']}",
-                type="primary",
-            ):
-              conn = get_db_connection()
-              cursor = conn.cursor()
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+              if st.button(
+                  f"✅ ผ่านการตรวจสอบ ({user['name']})",
+                  key=f"c_fmea_{doc['doc_id']}",
+                  type="primary",
+              ):
+                conn = get_db_connection()
+                cursor = conn.cursor()
 
-              if next_status == "PENDING_REGISTER":
+                if next_status == "PENDING_REGISTER":
+                  cursor.execute(
+                      f"""UPDATE documents 
+                                    SET {chk_field} = ?, 
+                                        status = ?, 
+                                        checked_by = 'FMEA Team Checked', 
+                                        approved_by = 'AUTO_APPROVED' 
+                                    WHERE doc_id = ?""",
+                      (user["name"], next_status, doc["doc_id"]),
+                  )
+                else:
+                  cursor.execute(
+                      f"UPDATE documents SET {chk_field} = ?, status = ? WHERE doc_id = ?",
+                      (user["name"], next_status, doc["doc_id"]),
+                  )
+
+                conn.commit()
+
                 cursor.execute(
-                    f"""UPDATE documents 
-                                   SET {chk_field} = ?, 
-                                       status = ?, 
-                                       checked_by = 'FMEA Team Checked', 
-                                       approved_by = 'AUTO_APPROVED' 
-                                   WHERE doc_id = ?""",
-                    (user["name"], next_status, doc["doc_id"]),
+                    "SELECT * FROM documents WHERE doc_id = ?", (doc["doc_id"],)
                 )
-              else:
-                cursor.execute(
-                    f"UPDATE documents SET {chk_field} = ?, status = ? WHERE doc_id = ?",
-                    (user["name"], next_status, doc["doc_id"]),
-                )
+                updated_row = cursor.fetchone()
+                if updated_row:
+                  updated_doc = dict(updated_row)
+                  add_approval_stamp_dynamic(updated_doc["file_path"], updated_doc)
 
-              conn.commit()
+                conn.close()
 
-              cursor.execute(
-                  "SELECT * FROM documents WHERE doc_id = ?", (doc["doc_id"],)
+                if next_email and next_email.strip():
+                  action_text = (
+                      "ขึ้นทะเบียนเอกสาร"
+                      if next_status == "PENDING_REGISTER"
+                      else "ตรวจสอบ"
+                  )
+                  send_next_step_email(
+                      next_email,
+                      doc["doc_id"],
+                      doc["title"],
+                      next_role,
+                      action_text,
+                  )
+
+                st.success("บันทึกการลงนามเรียบร้อย")
+                st.rerun()
+
+            with col_b2:
+              reject_reason = st.text_input(
+                  "ระบุเหตุผลที่ตีกลับ", key=f"rej_reason_fmea_{doc['doc_id']}"
               )
-              updated_row = cursor.fetchone()
-              if updated_row:
-                updated_doc = dict(updated_row)
-                add_approval_stamp_dynamic(updated_doc["file_path"], updated_doc)
-
-              conn.close()
-
-              if next_email and next_email.strip():
-                action_text = (
-                    "ขึ้นทะเบียนเอกสาร"
-                    if next_status == "PENDING_REGISTER"
-                    else "ตรวจสอบ"
+              if st.button(
+                  "❌ ตีกลับให้แก้ไข",
+                  key=f"btn_rej_fmea_{doc['doc_id']}",
+                  type="secondary",
+              ):
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    """UPDATE documents 
+                                   SET status = 'REJECTED', reject_comment = ? 
+                                   WHERE doc_id = ?""",
+                    (f"{user['name']} (Reject): {reject_reason}", doc["doc_id"]),
                 )
-                send_next_step_email(
-                    next_email,
-                    doc["doc_id"],
-                    doc["title"],
-                    next_role,
-                    action_text,
-                )
-
-              if next_status == "PENDING_REGISTER":
-                st.success(
-                    "🎉 อนุมัติครบทั้ง 5 แผนกแล้ว! ประทับตรา APPROVED"
-                    " สีแดงสมบูรณ์และส่งอีเมลหาผู้ขึ้นทะเบียนแล้ว"
-                )
-              else:
-                st.success(
-                    f"บันทึกการลงนามเรียบร้อย ส่งต่ออีเมลให้ {next_role} แล้ว"
-                )
-
-              st.rerun()
+                conn.commit()
+                conn.close()
+                st.warning("ตีกลับเอกสารไปยังผู้จัดทำเรียบร้อยแล้ว")
+                st.rerun()
           else:
-            st.info(
-                "ℹ️ ยังไม่ถึงลำดับการอนุมัติของคุณ หรือคุณไม่มีสิทธิ์ลงนามในขั้นตอนนี้"
-            )
+            st.info("ℹ️ ยังไม่ถึงลำดับการอนุมัติของคุณ หรือคุณไม่มีสิทธิ์ในขั้นตอนนี้")
 
         else:
           if doc["status"] == "PENDING_CHECK":
-            if st.button(
-                "✅ ผ่านการตรวจสอบ",
-                key=f"c_pass_{doc['doc_id']}",
-                type="primary",
-            ):
-              conn = get_db_connection()
-              cursor = conn.cursor()
-              cursor.execute(
-                  "UPDATE documents SET status = 'PENDING_APPROVE', checked_by"
-                  " = ? WHERE doc_id = ?",
-                  (user["name"], doc["doc_id"]),
-              )
-              conn.commit()
-              conn.close()
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+              if st.button(
+                  "✅ ผ่านการตรวจสอบ",
+                  key=f"c_pass_{doc['doc_id']}",
+                  type="primary",
+              ):
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE documents SET status = 'PENDING_APPROVE', checked_by"
+                    " = ? WHERE doc_id = ?",
+                    (user["name"], doc["doc_id"]),
+                )
+                conn.commit()
+                conn.close()
 
-              send_next_step_email(
-                  doc["approver_email"],
-                  doc["doc_id"],
-                  doc["title"],
-                  "Approver",
-                  "อนุมัติเอกสาร",
+                send_next_step_email(
+                    doc["approver_email"],
+                    doc["doc_id"],
+                    doc["title"],
+                    "Approver",
+                    "อนุมัติเอกสาร",
+                )
+                st.success("ตรวจสอบผ่านเรียบร้อย! ส่งอีเมลต่อไปยังผู้อนุมัติแล้ว")
+                st.rerun()
+
+            with col_b2:
+              reject_reason = st.text_input(
+                  "ระบุเหตุผลที่ตีกลับ", key=f"rej_reason_gen_{doc['doc_id']}"
               )
-              st.success(
-                  "ตรวจสอบผ่านเรียบร้อย! ส่งอีเมลต่อไปยังผู้อนุมัติแล้ว"
-              )
-              st.rerun()
+              if st.button(
+                  "❌ ตีกลับให้แก้ไข",
+                  key=f"btn_rej_gen_{doc['doc_id']}",
+                  type="secondary",
+              ):
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    """UPDATE documents 
+                                   SET status = 'REJECTED', reject_comment = ? 
+                                   WHERE doc_id = ?""",
+                    (f"{user['name']} (Reject): {reject_reason}", doc["doc_id"]),
+                )
+                conn.commit()
+                conn.close()
+                st.warning("ตีกลับเอกสารไปยังผู้จัดทำเรียบร้อยแล้ว")
+                st.rerun()
 
   # ---------------------------------------------------------
   # APPROVE ROLE (สำหรับเอกสารทั่วไป)
@@ -803,35 +874,56 @@ def main_app():
         )
         st.markdown("---")
 
-        if st.button(
-            "✅ อนุมัติและประทับตรา Stamp",
-            key=f"a_btn_{doc['doc_id']}",
-            type="primary",
-        ):
-          doc["approved_by"] = user["name"]
-          stamp_ok = add_approval_stamp_dynamic(doc["file_path"], doc)
-          if stamp_ok:
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+          if st.button(
+              "✅ อนุมัติและประทับตรา Stamp",
+              key=f"a_btn_{doc['doc_id']}",
+              type="primary",
+          ):
+            doc["approved_by"] = user["name"]
+            stamp_ok = add_approval_stamp_dynamic(doc["file_path"], doc)
+            if stamp_ok:
+              conn = get_db_connection()
+              cursor = conn.cursor()
+              cursor.execute(
+                  "UPDATE documents SET status = 'PENDING_REGISTER', approved_by ="
+                  " ? WHERE doc_id = ?",
+                  (user["name"], doc["doc_id"]),
+              )
+              conn.commit()
+              conn.close()
+
+              send_next_step_email(
+                  doc["register_email"],
+                  doc["doc_id"],
+                  doc["title"],
+                  "Register",
+                  "ขึ้นทะเบียนเอกสาร",
+              )
+              st.success("อนุมัติและประทับตรา Stamp สีแดงเรียบร้อยแล้ว!")
+              st.rerun()
+
+        with col_b2:
+          reject_reason = st.text_input(
+              "ระบุเหตุผลที่ตีกลับ", key=f"rej_reason_app_{doc['doc_id']}"
+          )
+          if st.button(
+              "❌ ตีกลับให้แก้ไข",
+              key=f"btn_rej_app_{doc['doc_id']}",
+              type="secondary",
+          ):
             conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "UPDATE documents SET status = 'PENDING_REGISTER', approved_by ="
-                " ? WHERE doc_id = ?",
-                (user["name"], doc["doc_id"]),
+                """UPDATE documents 
+                               SET status = 'REJECTED', reject_comment = ? 
+                               WHERE doc_id = ?""",
+                (f"{user['name']} (Reject): {reject_reason}", doc["doc_id"]),
             )
             conn.commit()
             conn.close()
-
-            send_next_step_email(
-                doc["register_email"],
-                doc["doc_id"],
-                doc["title"],
-                "Register",
-                "ขึ้นทะเบียนเอกสาร",
-            )
-            st.success(
-                "อนุมัติและประทับตรา Stamp สีแดงเรียบร้อยแล้ว!"
-                " ส่งอีเมลต่อไปยังผู้ขึ้นทะเบียนแล้ว"
-            )
+            st.warning("ตีกลับเอกสารไปยังผู้จัดทำเรียบร้อยแล้ว")
             st.rerun()
 
   # ---------------------------------------------------------
