@@ -406,15 +406,6 @@ def get_documents_by_status(statuses=None):
 # 6. Main App Process
 # -------------------------------------------------------------
 def main_app():
-  # === เพิ่ม 3 บรรทัดนี้เพื่อลบฐานข้อมูลเก่าทิ้งอัตโนมัติ ===
-  if os.path.exists("document_approval.db"):
-    os.remove("document_approval.db")
-  # =======================================================
-
-  st.set_page_config(
-      page_title="Document Approval System", page_icon="📄", layout="wide"
-  )
-  init_db()  # บรรทัดนี้จะสร้างฐานข้อมูลใหม่ที่ถูกต้องขึ้นมาให้ทันที
   user = st.session_state.authenticated_user
   st.sidebar.title("👤 ผู้ใช้งานปัจจุบัน")
   st.sidebar.write(f"**ชื่อ:** {user['name']}")
