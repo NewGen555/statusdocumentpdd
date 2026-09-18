@@ -60,7 +60,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("🌈 แบบฝึกหัดเตรียมสอบอนุบาล (28 ก.ย. - 2 ต.ค. 69)")[span_1](start_span)[span_1](end_span)
+st.title("🌈 แบบฝึกหัดเตรียมสอบอนุบาล (28 ก.ย. - 2 ต.ค. 69)")
 
 tab1, tab2 = st.tabs(["🇹🇭 วิชาภาษาไทย", "🔢 วิชาคณิตศาสตร์"])
 
@@ -71,8 +71,8 @@ with tab1:
     st.header("🇹🇭 วิชาภาษาไทย")
 
     # 1.1 ทายพยัญชนะ ก-ฮ (ไม่มีภาพ)
-    st.subheader("1. บอกพยัญชนะไทย (ก - ฮ)")[span_2](start_span)[span_2](end_span)
-    st.caption("ครู/ผู้ปกครองแสดงบัตรตัวอักษรแล้วให้เด็กๆ ตอบเสียงอ่าน")[span_3](start_span)[span_3](end_span)
+    st.subheader("1. บอกพยัญชนะไทย (ก - ฮ)")
+    st.caption("ครู/ผู้ปกครองแสดงบัตรตัวอักษรแล้วให้เด็กๆ ตอบเสียงอ่าน")
 
     thai_letters = [
         "ก",
@@ -119,7 +119,7 @@ with tab1:
         "ฬ",
         "อ",
         "ฮ",
-    ][span_4](start_span)[span_4](end_span)
+    ]
 
     if "current_letter" not in st.session_state:
         st.session_state.current_letter = "ก"
@@ -135,7 +135,7 @@ with tab1:
     st.divider()
 
     # 1.2 จับคู่พยัญชนะกับรูปภาพ
-    st.subheader("2. จับคู่พยัญชนะกับรูปภาพ")[span_5](start_span)[span_5](end_span)
+    st.subheader("2. จับคู่พยัญชนะกับรูปภาพ")
     st.write("เลือกรูปภาพให้ตรงกับตัวอักษร **'ก'**")
 
     col1, col2, col3 = st.columns(3)
@@ -157,8 +157,8 @@ with tab2:
     st.header("🔢 วิชาคณิตศาสตร์")
 
     # 2.1 จับคู่เลขไทย-อารบิก
-    st.subheader("1. จับคู่เลขไทย (๑-๕) กับ เลขอารบิก (1-5)")[span_6](start_span)[span_6](end_span)
-    st.write("เลขไทย **'๓'** ตรงกับเลขอารบิกตัวไหน?")[span_7](start_span)[span_7](end_span)
+    st.subheader("1. จับคู่เลขไทย (๑-๕) กับ เลขอารบิก (1-5)")
+    st.write("เลขไทย **'๓'** ตรงกับเลขอารบิกตัวไหน?")
 
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
@@ -170,7 +170,7 @@ with tab2:
     with c3:
         if st.button("3"):
             st.balloons()
-            st.success("🎉 เก่งมาก! ๓ เท่ากับ 3")[span_8](start_span)[span_8](end_span)
+            st.success("🎉 เก่งมาก! ๓ เท่ากับ 3")
     with c4:
         if st.button("4"):
             st.error("ยังไม่ใช่ครับ")
@@ -181,7 +181,7 @@ with tab2:
     st.divider()
 
     # 2.2 นับจำนวนและเลือกตัวเลข 1-10
-    st.subheader("2. นับจำนวนสิ่งของ (1-10)")[span_9](start_span)[span_9](end_span)
+    st.subheader("2. นับจำนวนสิ่งของ (1-10)")
     st.write("นับส้มสิว่ามีกี่ผล? 🍊")
     st.markdown(
         "<div class='emoji-box'>🍊 🍊 🍊 🍊</div>", unsafe_allow_html=True
