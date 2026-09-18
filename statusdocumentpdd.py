@@ -202,34 +202,34 @@ with tab2:
     st.divider()
 
     # 2.3 เปรียบเทียบขนาด
-    st.subheader("3. เปรียบเทียบขนาด")[span_10](start_span)[span_10](end_span)
+    st.subheader("3. เปรียบเทียบขนาด")
 
     # ข้อที่ 1: สั้น - ยาว
-    st.write("📍 **ข้อ 1: สิ่งไหน 'ยาว' กว่ากัน?**")[span_11](start_span)[span_11](end_span)
+    st.write("📍 **ข้อ 1: สิ่งไหน 'ยาว' กว่ากัน?**")
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button("✏️✏️✏️ ดินสอยาว", use_container_width=True):[span_12](start_span)[span_12](end_span)
+        if st.button("✏️✏️✏️ ดินสอยาว", use_container_width=True):
             st.success("🎉 ถูกต้องครับ!")
     with col_b:
-        if st.button("✏️ ดินสอสั้น", use_container_width=True):[span_13](start_span)[span_13](end_span)
+        if st.button("✏️ ดินสอสั้น", use_container_width=True):
             st.error("❌ อันนี้สั้นกว่าครับ")
 
     # ข้อที่ 2: สูง - เตี้ย
-    st.write("📍 **ข้อ 2: สัตว์ตัวไหน 'สูง' กว่ากัน?**")[span_14](start_span)[span_14](end_span)
+    st.write("📍 **ข้อ 2: สัตว์ตัวไหน 'สูง' กว่ากัน?**")
     col_c, col_d = st.columns(2)
     with col_c:
-        if st.button("🦒 ยีราฟสูง", use_container_width=True):[span_15](start_span)[span_15](end_span)
-            st.success("🎉 เก่งมาก! ยีราฟตัวสูง")[span_16](start_span)[span_16](end_span)
+        if st.button("🦒 ยีราฟสูง", use_container_width=True):
+            st.success("🎉 เก่งมาก! ยีราฟตัวสูง")
     with col_d:
-        if st.button("🐧 เพนกวินเตี้ย", use_container_width=True):[span_17](start_span)[span_17](end_span)
-            st.error("❌ เพนกวินตัวเตี้ยกว่าครับ")[span_18](start_span)[span_18](end_span)
+        if st.button("🐧 เพนกวินเตี้ย", use_container_width=True):
+            st.error("❌ เพนกวินตัวเตี้ยกว่าครับ")
 
     # ข้อที่ 3: เล็ก - ใหญ่
-    st.write("📍 **ข้อ 3: สิ่งไหน 'เล็ก' กว่ากัน?**")[span_19](start_span)[span_19](end_span)
+    st.write("📍 **ข้อ 3: สิ่งไหน 'เล็ก' กว่ากัน?**")
     col_e, col_f = st.columns(2)
     with col_e:
-        if st.button("⚽ ฟุตบอลใหญ่", use_container_width=True):[span_20](start_span)[span_20](end_span)
+        if st.button("⚽ ฟุตบอลใหญ่", use_container_width=True):
             st.error("❌ ฟุตบอลลูกใหญ่กว่านะ")
     with col_f:
-        if st.button("🎾 เทนนิสเล็ก", use_container_width=True):[span_21](start_span)[span_21](end_span)
+        if st.button("🎾 เทนนิสเล็ก", use_container_width=True):
             st.success("🎉 ถูกต้อง! ลูกเทนนิสเล็กกว่า")
