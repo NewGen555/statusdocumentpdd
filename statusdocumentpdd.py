@@ -52,7 +52,7 @@ st.markdown(
 
 st.title("🌈 แบบฝึกหัดเตรียมสอบอนุบาล (28 ก.ย. - 2 ต.ค. 69)")
 
-tab1, tab2, tab3 = st.tabs(["🇹🇭 วิชาภาษาไทย", "🔢 วิชาคณิตศาสตร์ (1-10)", "🔤 วิชาภาษาอังกฤษ (A-Z)"])
+tab1, tab2, tab3 = st.tabs(["🇹🇭 วิชาภาษาไทย", "🔢 วิชาคณิตศาสตร์ (1-10)", "🔤 วิชาภาษาอังกฤษ (Aa-Zz)"])
 
 # ==========================================
 # 1. หมวดวิชาภาษาไทย (ครบทั้ง 44 พยัญชนะ)
@@ -396,36 +396,36 @@ with tab2:
 
 
 # ==========================================
-# 3. หมวดวิชาภาษาอังกฤษ (A - Z ครบ 26 ตัว)
+# 3. หมวดวิชาภาษาอังกฤษ (Aa - Zz พิมพ์ใหญ่-เล็ก)
 # ==========================================
 with tab3:
     ENG_DICT = {
-        "A": ("Apple", "🍎"),
-        "B": ("Bird", "🐦"),
-        "C": ("Cat", "🐱"),
-        "D": ("Dog", "🐶"),
-        "E": ("Elephant", "🐘"),
-        "F": ("Fish", "🐟"),
-        "G": ("Giraffe", "🦒"),
-        "H": ("Horse", "🐴"),
-        "I": ("Ice cream", "🍦"),
-        "J": ("Juice", "🧃"),
-        "K": ("Kangaroo", "🦘"),
-        "L": ("Lion", "🦁"),
-        "M": ("Monkey", "🐒"),
-        "N": ("Nest", "🪹"),
-        "O": ("Owl", "🦉"),
-        "P": ("Pig", "🐷"),
-        "Q": ("Queen", "👸"),
-        "R": ("Rabbit", "🐰"),
-        "S": ("Sun", "☀️"),
-        "T": ("Tiger", "🐯"),
-        "U": ("Umbrella", "☂️"),
-        "V": ("Van", "🚐"),
-        "W": ("Watermelon", "🍉"),
-        "X": ("Xylophone", "🎼"),
-        "Y": ("Yacht", "🛥️"),
-        "Z": ("Zebra", "🦓"),
+        "A": ("a", "Apple", "🍎"),
+        "B": ("b", "Bird", "🐦"),
+        "C": ("c", "Cat", "🐱"),
+        "D": ("d", "Dog", "🐶"),
+        "E": ("e", "Elephant", "🐘"),
+        "F": ("f", "Fish", "🐟"),
+        "G": ("g", "Giraffe", "🦒"),
+        "H": ("h", "Horse", "🐴"),
+        "I": ("i", "Ice cream", "🍦"),
+        "J": ("j", "Juice", "🧃"),
+        "K": ("k", "Kangaroo", "🦘"),
+        "L": ("l", "Lion", "🦁"),
+        "M": ("m", "Monkey", "🐒"),
+        "N": ("n", "Nest", "🪹"),
+        "O": ("o", "Owl", "🦉"),
+        "P": ("p", "Pig", "🐷"),
+        "Q": ("q", "Queen", "👸"),
+        "R": ("r", "Rabbit", "🐰"),
+        "S": ("s", "Sun", "☀️"),
+        "T": ("t", "Tiger", "🐯"),
+        "U": ("u", "Umbrella", "☂️"),
+        "V": ("v", "Van", "🚐"),
+        "W": ("w", "Watermelon", "🍉"),
+        "X": ("x", "Xylophone", "🎼"),
+        "Y": ("y", "Yacht", "🛥️"),
+        "Z": ("z", "Zebra", "🦓"),
     }
 
     if "eng_stage" not in st.session_state:
@@ -437,15 +437,19 @@ with tab3:
 
     st.caption(f"🏆 ภาษาอังกฤษ: ด่านที่ {st.session_state.eng_stage} / 2")
 
+    # --- ด่านที่ 1: บัตรคำภาษาอังกฤษ (Aa - Zz) ---
     if st.session_state.eng_stage == 1:
-        st.subheader("ด่านที่ 1: บอกตัวอักษรภาษาอังกฤษ (A - Z)")
-        st.write("ทายออกเสียงอ่านตัวอักษรภาษาอังกฤษที่กำหนด")
+        st.subheader("ด่านที่ 1: บอกตัวอักษรภาษาอังกฤษ (Aa - Zz)")
+        st.write("ทายออกเสียงอ่านตัวอักษรพิมพ์ใหญ่และพิมพ์เล็ก")
 
         if "flash_eng_letter" not in st.session_state:
             st.session_state.flash_eng_letter = "A"
 
+        curr_upper = st.session_state.flash_eng_letter
+        curr_lower = ENG_DICT[curr_upper][0]
+
         st.markdown(
-            f"<div class='giant-text'>{st.session_state.flash_eng_letter}</div>",
+            f"<div class='giant-text'>{curr_upper}{curr_lower}</div>",
             unsafe_allow_html=True,
         )
 
@@ -457,12 +461,13 @@ with tab3:
                 )
                 st.rerun()
         with col_b:
-            if st.button("ไปด่านจับคู่ A-Z ➡️", type="primary"):
+            if st.button("ไปด่านจับคู่ Aa-Zz ➡️", type="primary"):
                 st.session_state.eng_stage = 2
                 st.rerun()
 
+    # --- ด่านที่ 2: จับคู่ตัวอักษร Aa-Zz กับรูปภาพ ---
     elif st.session_state.eng_stage == 2:
-        st.subheader("ด่านที่ 2: จับคู่ตัวอักษร A-Z กับรูปภาพคำศัพท์")
+        st.subheader("ด่านที่ 2: จับคู่ตัวอักษร Aa-Zz กับรูปภาพคำศัพท์")
 
         st.progress(
             min(st.session_state.eng_score / 26, 1.0),
@@ -470,10 +475,10 @@ with tab3:
         )
 
         eng_target = st.session_state.current_eng_letter
-        eng_correct_word, eng_correct_emoji = ENG_DICT[eng_target]
+        eng_lower, eng_correct_word, eng_correct_emoji = ENG_DICT[eng_target]
 
         st.markdown(
-            f"<h2 style='text-align: center;'>รูปภาพไหนตรงกับตัวอักษร: <span style='color: #FF3D00; font-size: 60px;'>'{eng_target}'</span> ?</h2>",
+            f"<h2 style='text-align: center;'>รูปภาพไหนตรงกับตัวอักษร: <span style='color: #FF3D00; font-size: 60px;'>'{eng_target}{eng_lower}'</span> ?</h2>",
             unsafe_allow_html=True,
         )
 
@@ -481,16 +486,18 @@ with tab3:
         wrong_eng_samples = random.sample(other_eng_letters, 2)
 
         eng_options = [
-            (eng_target, eng_correct_word, eng_correct_emoji),
+            (eng_target, eng_lower, eng_correct_word, eng_correct_emoji),
             (
                 wrong_eng_samples[0],
                 ENG_DICT[wrong_eng_samples[0]][0],
                 ENG_DICT[wrong_eng_samples[0]][1],
+                ENG_DICT[wrong_eng_samples[0]][2],
             ),
             (
                 wrong_eng_samples[1],
                 ENG_DICT[wrong_eng_samples[1]][0],
                 ENG_DICT[wrong_eng_samples[1]][1],
+                ENG_DICT[wrong_eng_samples[1]][2],
             ),
         ]
 
@@ -499,7 +506,7 @@ with tab3:
             random.shuffle(st.session_state.shuffled_eng_options)
 
         cols = st.columns(3)
-        for idx, (l_code, word, emoji) in enumerate(
+        for idx, (l_code, l_low, word, emoji) in enumerate(
             st.session_state.shuffled_eng_options
         ):
             with cols[idx]:
@@ -510,7 +517,7 @@ with tab3:
                     if l_code == eng_target:
                         st.balloons()
                         st.success(
-                            f"🎉 Excellent! {eng_target} - {word} กำลังไปข้อถัดไป..."
+                            f"🎉 Excellent! {eng_target}{l_low} - {word} กำลังไปข้อถัดไป..."
                         )
                         st.session_state.eng_score += 1
                         st.session_state.current_eng_letter = random.choice(
@@ -521,7 +528,7 @@ with tab3:
                         time.sleep(1.5)
                         st.rerun()
                     else:
-                        st.error(f"❌ Try again! อันนี้คือ {l_code} - {word}")
+                        st.error(f"❌ Try again! อันนี้คือ {l_code}{l_low} - {word}")
 
         st.write("")
         if st.button("🔄 สุ่มโจทย์ภาษาอังกฤษใหม่"):
