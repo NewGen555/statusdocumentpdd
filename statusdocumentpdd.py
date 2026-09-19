@@ -50,7 +50,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("🌈 แบบฝึกหัดเตรียมสอบอนุบาล (28 ก.ย. - 2 ต.ค. 69)")[cite: 1]
+st.title("🌈 แบบฝึกหัดเตรียมสอบอนุบาล (28 ก.ย. - 2 ต.ค. 69)")
 
 tab1, tab2, tab3 = st.tabs(["🇹🇭 วิชาภาษาไทย", "🔢 วิชาคณิตศาสตร์ (1-10)", "🔤 วิชาภาษาอังกฤษ (A-Z)"])
 
@@ -115,8 +115,8 @@ with tab1:
     st.caption(f"🏆 ภาษาไทย: ด่านที่ {st.session_state.thai_stage} / 2")
 
     if st.session_state.thai_stage == 1:
-        st.subheader("ด่านที่ 1: บอกพยัญชนะไทย (ก - ฮ)")[cite: 1]
-        st.write("ครู/ผู้ปกครองแสดงบัตรตัวอักษรให้เด็กๆ ตอบเสียงอ่าน")[cite: 1]
+        st.subheader("ด่านที่ 1: บอกพยัญชนะไทย (ก - ฮ)")
+        st.write("ครู/ผู้ปกครองแสดงบัตรตัวอักษรให้เด็กๆ ตอบเสียงอ่าน")
 
         if "flash_letter" not in st.session_state:
             st.session_state.flash_letter = "ก"
@@ -242,7 +242,7 @@ with tab2:
     st.divider()
 
     if "1️⃣" in sub_math:
-        st.subheader("1. จับคู่เลขไทย (๑-๑๐) กับ เลขอารบิก (1-10)")[cite: 1]
+        st.subheader("1. จับคู่เลขไทย (๑-๑๐) กับ เลขอารบิก (1-10)")
 
         if "math_target_num" not in st.session_state:
             st.session_state.math_target_num = random.randint(1, 10)
@@ -272,7 +272,7 @@ with tab2:
                         st.balloons()
                         st.success(
                             f"🎉 เก่งมาก! เลขไทย {target_thai} คือ เลขอารบิก {target_n} กำลังไปข้อถัดไป..."
-                        )[cite: 1]
+                        )
                         st.session_state.math_target_num = random.randint(
                             1, 10
                         )
@@ -291,7 +291,7 @@ with tab2:
             st.rerun()
 
     elif "2️⃣" in sub_math:
-        st.subheader("2. นับจำนวนและระบุตัวเลข (1-10)")[cite: 1]
+        st.subheader("2. นับจำนวนและระบุตัวเลข (1-10)")
 
         if "count_item_num" not in st.session_state:
             st.session_state.count_item_num = random.randint(1, 10)
@@ -340,7 +340,7 @@ with tab2:
             st.rerun()
 
     elif "3️⃣" in sub_math:
-        st.subheader("3. เปรียบเทียบขนาด")[cite: 1]
+        st.subheader("3. เปรียบเทียบขนาด")
 
         if "size_sub_stage" not in st.session_state:
             st.session_state.size_sub_stage = 1
@@ -350,41 +350,41 @@ with tab2:
         )
 
         if st.session_state.size_sub_stage == 1:
-            st.write("📍 **ข้อ 1: สิ่งไหน 'ยาว' กว่ากัน?**")[cite: 1]
+            st.write("📍 **ข้อ 1: สิ่งไหน 'ยาว' กว่ากัน?**")
             col_a, col_b = st.columns(2)
             with col_a:
-                if st.button("✏️✏️✏️ ดินสอยาว", use_container_width=True):[cite: 1]
+                if st.button("✏️✏️✏️ ดินสอยาว", use_container_width=True):
                     st.balloons()
                     st.success("🎉 ถูกต้องครับ! กำลังไปข้อถัดไป...")
                     time.sleep(1.5)
                     st.session_state.size_sub_stage = 2
                     st.rerun()
             with col_b:
-                if st.button("✏️ ดินสอสั้น", use_container_width=True):[cite: 1]
+                if st.button("✏️ ดินสอสั้น", use_container_width=True):
                     st.error("❌ อันนี้สั้นกว่าครับ")
 
         elif st.session_state.size_sub_stage == 2:
-            st.write("📍 **ข้อ 2: สัตว์ตัวไหน 'สูง' กว่ากัน?**")[cite: 1]
+            st.write("📍 **ข้อ 2: สัตว์ตัวไหน 'สูง' กว่ากัน?**")
             col_c, col_d = st.columns(2)
             with col_c:
-                if st.button("🦒 ยีราฟสูง", use_container_width=True):[cite: 1]
+                if st.button("🦒 ยีราฟสูง", use_container_width=True):
                     st.balloons()
-                    st.success("🎉 เก่งมาก! ยีราฟตัวสูง กำลังไปข้อถัดไป...")[cite: 1]
+                    st.success("🎉 เก่งมาก! ยีราฟตัวสูง กำลังไปข้อถัดไป...")
                     time.sleep(1.5)
                     st.session_state.size_sub_stage = 3
                     st.rerun()
             with col_d:
-                if st.button("🐧 เพนกวินเตี้ย", use_container_width=True):[cite: 1]
-                    st.error("❌ เพนกวินตัวเตี้ยกว่าครับ")[cite: 1]
+                if st.button("🐧 เพนกวินเตี้ย", use_container_width=True):
+                    st.error("❌ เพนกวินตัวเตี้ยกว่าครับ")
 
         elif st.session_state.size_sub_stage == 3:
-            st.write("📍 **ข้อ 3: สิ่งไหน 'เล็ก' กว่ากัน?**")[cite: 1]
+            st.write("📍 **ข้อ 3: สิ่งไหน 'เล็ก' กว่ากัน?**")
             col_e, col_f = st.columns(2)
             with col_e:
-                if st.button("⚽ ฟุตบอลใหญ่", use_container_width=True):[cite: 1]
+                if st.button("⚽ ฟุตบอลใหญ่", use_container_width=True):
                     st.error("❌ ฟุตบอลลูกใหญ่กว่านะ")
             with col_f:
-                if st.button("🎾 เทนนิสเล็ก", use_container_width=True):[cite: 1]
+                if st.button("🎾 เทนนิสเล็ก", use_container_width=True):
                     st.balloons()
                     st.success(
                         "🎉 ถูกต้อง! ลูกเทนนิสเล็กกว่า ผ่านครบทุกข้อแล้ว 🏆"
@@ -437,7 +437,6 @@ with tab3:
 
     st.caption(f"🏆 ภาษาอังกฤษ: ด่านที่ {st.session_state.eng_stage} / 2")
 
-    # --- ด่านที่ 1: บัตรคำภาษาอังกฤษ (A - Z) ---
     if st.session_state.eng_stage == 1:
         st.subheader("ด่านที่ 1: บอกตัวอักษรภาษาอังกฤษ (A - Z)")
         st.write("ทายออกเสียงอ่านตัวอักษรภาษาอังกฤษที่กำหนด")
@@ -462,7 +461,6 @@ with tab3:
                 st.session_state.eng_stage = 2
                 st.rerun()
 
-    # --- ด่านที่ 2: จับคู่ตัวอักษร A-Z กับรูปภาพ ---
     elif st.session_state.eng_stage == 2:
         st.subheader("ด่านที่ 2: จับคู่ตัวอักษร A-Z กับรูปภาพคำศัพท์")
 
